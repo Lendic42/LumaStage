@@ -1,0 +1,356 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0AE7F36C6A1C08EB3602643D /* DesktopConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B34BD640C7B5968B84E7425 /* DesktopConnection.swift */; };
+		4C105C5368535009E0220417 /* TrackerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C58066EA2ECE237AA432D704 /* TrackerView.swift */; };
+		6148804ACD9F3ABB11E5FB39 /* FaceCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AD7ED2C162A0A5AFC602199 /* FaceCameraView.swift */; };
+		7727824B73A16E163C9FF81E /* TrackingFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D2F985A86FF4C37B05A0F67 /* TrackingFrame.swift */; };
+		77B3068A5858ABFCCCCCE716 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8C78460200717E3AF07D8167 /* Assets.xcassets */; };
+		8EC40DDC0FE0A22FCB2E7F55 /* LumaStageTrackerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E781E11119390549F032170A /* LumaStageTrackerApp.swift */; };
+		D6359932509DC6D5FF0F8630 /* FaceTrackingController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D137F7AC0DE9CFA9ABD29B39 /* FaceTrackingController.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		2AD7ED2C162A0A5AFC602199 /* FaceCameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceCameraView.swift; sourceTree = "<group>"; };
+		2D2F985A86FF4C37B05A0F67 /* TrackingFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingFrame.swift; sourceTree = "<group>"; };
+		4B34BD640C7B5968B84E7425 /* DesktopConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopConnection.swift; sourceTree = "<group>"; };
+		70DF6C1D652A6542ACC82EAA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		8C78460200717E3AF07D8167 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C58066EA2ECE237AA432D704 /* TrackerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackerView.swift; sourceTree = "<group>"; };
+		D137F7AC0DE9CFA9ABD29B39 /* FaceTrackingController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceTrackingController.swift; sourceTree = "<group>"; };
+		D25DE85D3BA5AA78198910EF /* LumaStageTracker.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LumaStageTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E781E11119390549F032170A /* LumaStageTrackerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LumaStageTrackerApp.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0644AF3D21383F66EC4AF0DE /* App */ = {
+			isa = PBXGroup;
+			children = (
+				E781E11119390549F032170A /* LumaStageTrackerApp.swift */,
+				C58066EA2ECE237AA432D704 /* TrackerView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		1E0666AEC7DC2F8282971EDA /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				4B34BD640C7B5968B84E7425 /* DesktopConnection.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		4DD9F52C168A666E8BA20276 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D25DE85D3BA5AA78198910EF /* LumaStageTracker.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		5A822280A51F6CC3087E095F /* LumaStageTracker */ = {
+			isa = PBXGroup;
+			children = (
+				8C78460200717E3AF07D8167 /* Assets.xcassets */,
+				70DF6C1D652A6542ACC82EAA /* Info.plist */,
+				0644AF3D21383F66EC4AF0DE /* App */,
+				1E0666AEC7DC2F8282971EDA /* Networking */,
+				9D6666BE83C569FF43FC46A9 /* Tracking */,
+			);
+			path = LumaStageTracker;
+			sourceTree = "<group>";
+		};
+		9D6666BE83C569FF43FC46A9 /* Tracking */ = {
+			isa = PBXGroup;
+			children = (
+				2AD7ED2C162A0A5AFC602199 /* FaceCameraView.swift */,
+				D137F7AC0DE9CFA9ABD29B39 /* FaceTrackingController.swift */,
+				2D2F985A86FF4C37B05A0F67 /* TrackingFrame.swift */,
+			);
+			path = Tracking;
+			sourceTree = "<group>";
+		};
+		DE334FBC8E81D2152826C967 = {
+			isa = PBXGroup;
+			children = (
+				5A822280A51F6CC3087E095F /* LumaStageTracker */,
+				4DD9F52C168A666E8BA20276 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1F59308CC8B7D2FB7DC83122 /* LumaStageTracker */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD489C668326F72AFD1DDCBC /* Build configuration list for PBXNativeTarget "LumaStageTracker" */;
+			buildPhases = (
+				7C10B3BE83294EF5FF00336E /* Sources */,
+				98FCE927F475D70D87ADAEAB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = LumaStageTracker;
+			packageProductDependencies = (
+			);
+			productName = LumaStageTracker;
+			productReference = D25DE85D3BA5AA78198910EF /* LumaStageTracker.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		250A66EBDEBA4C754B3A324B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					1F59308CC8B7D2FB7DC83122 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 608CB3EE5DB10CB256728E92 /* Build configuration list for PBXProject "LumaStageTracker" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = DE334FBC8E81D2152826C967;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 4DD9F52C168A666E8BA20276 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1F59308CC8B7D2FB7DC83122 /* LumaStageTracker */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		98FCE927F475D70D87ADAEAB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				77B3068A5858ABFCCCCCE716 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		7C10B3BE83294EF5FF00336E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0AE7F36C6A1C08EB3602643D /* DesktopConnection.swift in Sources */,
+				6148804ACD9F3ABB11E5FB39 /* FaceCameraView.swift in Sources */,
+				D6359932509DC6D5FF0F8630 /* FaceTrackingController.swift in Sources */,
+				8EC40DDC0FE0A22FCB2E7F55 /* LumaStageTrackerApp.swift in Sources */,
+				4C105C5368535009E0220417 /* TrackerView.swift in Sources */,
+				7727824B73A16E163C9FF81E /* TrackingFrame.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2999059F658E8EBA56589735 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LumaStageTracker/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.lumastage.tracker;
+				PRODUCT_NAME = "LumaStage Tracker";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		8239431C748A0B168CA2A687 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LumaStageTracker/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.lumastage.tracker;
+				PRODUCT_NAME = "LumaStage Tracker";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		887647845655203713929258 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		D7AA82852532E20AC26307C1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		608CB3EE5DB10CB256728E92 /* Build configuration list for PBXProject "LumaStageTracker" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D7AA82852532E20AC26307C1 /* Debug */,
+				887647845655203713929258 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AD489C668326F72AFD1DDCBC /* Build configuration list for PBXNativeTarget "LumaStageTracker" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2999059F658E8EBA56589735 /* Debug */,
+				8239431C748A0B168CA2A687 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 250A66EBDEBA4C754B3A324B /* Project object */;
+}

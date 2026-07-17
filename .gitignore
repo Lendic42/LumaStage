@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+DerivedData/
+*.ipa
+*.dmg
+*.exe
+coverage/
+work/
+*.iconset/
+outputs/

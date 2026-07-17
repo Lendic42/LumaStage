@@ -1,0 +1,66 @@
+{
+  "name": "@lumastage/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Open-source VTuber studio with iPhone TrueDepth tracking",
+  "author": "LumaStage contributors",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "npm run build -w @lumastage/protocol && electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "package:mac": "electron-builder --mac dmg zip --publish never",
+    "package:win": "electron-builder --win nsis portable --publish never"
+  },
+  "dependencies": {
+    "bonjour-service": "^1.3.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@lumastage/model-compat": "0.1.0",
+    "@lumastage/protocol": "0.1.0",
+    "@lumastage/tracking-core": "0.1.0",
+    "@types/node": "^24.0.15",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "43.1.1",
+    "electron-vite": "^5.0.0",
+    "electron-builder": "^26.15.3",
+    "pixi-live2d-display": "0.5.0-beta",
+    "pixi.js": "^7.4.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.5"
+  },
+  "build": {
+    "appId": "com.lumastage.desktop",
+    "productName": "LumaStage",
+    "asar": true,
+    "directories": {
+      "output": "../../outputs/desktop"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "icon": "build/icon.icns",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
