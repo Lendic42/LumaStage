@@ -15,7 +15,9 @@ const bridge: LumaStageBridge = {
   },
   importModel: () => ipcRenderer.invoke("import-model") as Promise<ImportedModel | null>,
   getCubismCoreStatus: () => ipcRenderer.invoke("cubism-core-status") as Promise<CubismCoreStatus>,
-  installCubismCore: () => ipcRenderer.invoke("install-cubism-core") as Promise<CubismCoreStatus | null>
+  installCubismCore: () => ipcRenderer.invoke("install-cubism-core") as Promise<CubismCoreStatus | null>,
+  setOverlayMode: (enabled) => ipcRenderer.invoke("set-overlay-mode", enabled) as Promise<boolean>,
+  forgetTrustedDevices: () => ipcRenderer.invoke("forget-trusted-devices") as Promise<boolean>
 };
 
 contextBridge.exposeInMainWorld("lumastage", bridge);

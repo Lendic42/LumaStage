@@ -8,6 +8,8 @@ export interface ImportedModel {
   textureCount: number;
   expressionCount: number;
   motionCount: number;
+  expressions: Array<{ name: string; file: string }>;
+  motionGroups: Record<string, string[]>;
   missingFiles: string[];
   manifestUrl: string;
   vTubeModelName?: string;
@@ -23,7 +25,15 @@ export interface ImportedModel {
     outputLive2D: string;
     smoothing: number;
   }>;
-  vTubeHotkeys: Array<{ id: string; name: string; action: string; file: string; folder: string }>;
+  vTubeHotkeys: ImportedHotkey[];
+}
+
+export interface ImportedHotkey {
+  id: string;
+  name: string;
+  action: string;
+  file: string;
+  folder: string;
 }
 
 export interface CubismCoreStatus {
@@ -34,6 +44,8 @@ export interface CubismCoreStatus {
 export interface DesktopStatus {
   port: number;
   connectedDevices: number;
+  pairingCode: string;
+  trustedDevices: number;
 }
 
 export interface LumaStageBridge {
@@ -42,4 +54,6 @@ export interface LumaStageBridge {
   importModel(): Promise<ImportedModel | null>;
   getCubismCoreStatus(): Promise<CubismCoreStatus>;
   installCubismCore(): Promise<CubismCoreStatus | null>;
+  setOverlayMode(enabled: boolean): Promise<boolean>;
+  forgetTrustedDevices(): Promise<boolean>;
 }

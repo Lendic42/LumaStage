@@ -7,7 +7,12 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ["@lumastage/model-compat", "@lumastage/protocol"] })]
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: ["@lumastage/protocol"] })]
+    plugins: [externalizeDepsPlugin({ exclude: ["@lumastage/protocol"] })],
+    build: {
+      rollupOptions: {
+        output: { format: "cjs", entryFileNames: "[name].cjs" }
+      }
+    }
   },
   renderer: {
     root: resolve("src/renderer"),

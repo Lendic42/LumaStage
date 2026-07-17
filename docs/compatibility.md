@@ -26,7 +26,8 @@ This preserves honest open-source licensing while still building real compatibil
 | Cubism 3/4/5 model folder discovery | Full | Implemented and tested on official Haru sample |
 | `.model3.json`, textures, physics, expressions, motions | Full through installed official Core | Renderer integrated; live Core verification pending |
 | Common VTube Studio parameter mappings | Import with standard-ID fallback | Implemented for documented/common tracking inputs |
-| VTube Studio hotkeys and scenes | Best effort; unsupported actions reported | Metadata import implemented; execution UI pending |
+| VTube Studio expression/motion hotkeys | Best effort; unsupported actions reported | Imported and executable from inspector |
+| VTube Studio scenes/model-changing hotkeys | Best effort | Planned |
 | VTube Studio plugin WebSocket API | Compatible subset, expanded by tests | Planned |
 | Encrypted/locked models | Respect protection; no bypass | By design |
 
@@ -35,4 +36,3 @@ This preserves honest open-source licensing while still building real compatibil
 VTube Studio's official manual confirms that the human-readable `*.vtube.json` beside a model stores its setup, but does not publish a stable schema. LumaStage therefore uses tolerant parsing: known mapping/hotkey fields are imported, extra fields are accepted, and the source file is never rewritten during import. Parameter settings preserve input/output ranges, clamping, custom `OutputLive2D` IDs and smoothing.
 
 Known tracking inputs currently include face angles/position, per-eye open and gaze, mouth open/smile, brows, cheek puff, angry face, mouth X and tongue. Unknown inputs remain visible to future mapping-editor work rather than being guessed.
-

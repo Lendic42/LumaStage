@@ -1,14 +1,15 @@
 import { useEffect, useRef } from "react";
 import { Application } from "pixi.js";
-import { Live2DModel, type Cubism4InternalModel } from "pixi-live2d-display/cubism4";
+import type { Live2DModel as Live2DModelType, Cubism4InternalModel } from "pixi-live2d-display/cubism4";
 import { TrackingEngine } from "@lumastage/tracking-core";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { ImportedModel } from "../../shared/bridge";
+import type { ImportedHotkey, ImportedModel } from "../../shared/bridge";
 
 interface Props {
   model: ImportedModel | null;
   frame: TrackingFrame;
   calibrationNonce: number;
+  hotkeyRequest: { nonce: number; hotkey: ImportedHotkey } | null;
   onReady(ready: boolean): void;
   onError(message: string | null): void;
 }
@@ -36,10 +37,11 @@ function loadCubismCore(): Promise<void> {
   return loading;
 }
 
-export function Live2DStage({ model: imported, frame, calibrationNonce, onReady, onError }: Props) {
+export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, onReady, onError }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef(new TrackingEngine());
+  const hotkeyHandlerRef = useRef<((hotkey: ImportedHotkey) => Promise<void>) | null>(null);
 
   useEffect(() => {
     engineRef.current.ingest(frame);
@@ -54,6 +56,17 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, onReady,
   }, [calibrationNonce]);
 
   useEffect(() => {
+    if (!hotkeyRequest) return;
+    if (!hotkeyHandlerRef.current) {
+      onError("Model renderer is not ready for hotkeys");
+      return;
+    }
+    void hotkeyHandlerRef.current(hotkeyRequest.hotkey).catch((reason) => {
+      onError(reason instanceof Error ? reason.message : String(reason));
+    });
+  }, [hotkeyRequest, onError]);
+
+  useEffect(() => {
     if (!imported || !canvasRef.current || !containerRef.current) {
       onReady(false);
       return;
@@ -61,13 +74,14 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, onReady,
 
     let disposed = false;
     let app: Application | undefined;
-    let liveModel: Live2DModel<Cubism4InternalModel> | undefined;
+    let liveModel: Live2DModelType<Cubism4InternalModel> | undefined;
     let resizeObserver: ResizeObserver | undefined;
 
     const start = async () => {
       onReady(false);
       onError(null);
       await loadCubismCore();
+      const { Live2DModel } = await import("pixi-live2d-display/cubism4");
       if (disposed || !canvasRef.current || !containerRef.current) return;
 
       app = new Application({
@@ -83,7 +97,7 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, onReady,
         autoUpdate: false,
         autoFocus: false,
         autoHitTest: true
-      }) as Live2DModel<Cubism4InternalModel>;
+      }) as Live2DModelType<Cubism4InternalModel>;
       if (disposed || !app) {
         liveModel.destroy({ children: true, texture: true, baseTexture: true });
         return;
@@ -115,6 +129,31 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, onReady,
         if (areas.length > 0) void liveModel?.motion("TapBody");
       });
       app.stage.addChild(liveModel);
+      hotkeyHandlerRef.current = async (hotkey) => {
+        if (!liveModel) throw new Error("Model renderer is not ready");
+        const action = hotkey.action.toLowerCase();
+        const requestedFile = hotkey.file.replaceAll("\\", "/").split("/").pop()?.toLowerCase();
+        if (action.includes("expression")) {
+          const expression = imported.expressions.find((item) => {
+            const file = item.file.replaceAll("\\", "/").split("/").pop()?.toLowerCase();
+            return file === requestedFile || item.name.toLowerCase() === hotkey.file.toLowerCase();
+          });
+          if (!expression) throw new Error(`Expression for hotkey “${hotkey.name}” was not found`);
+          await liveModel.expression(expression.name);
+          return;
+        }
+        if (action.includes("animation") || action.includes("motion")) {
+          for (const [group, files] of Object.entries(imported.motionGroups)) {
+            const index = files.findIndex((file) => file.replaceAll("\\", "/").split("/").pop()?.toLowerCase() === requestedFile);
+            if (index >= 0) {
+              await liveModel.motion(group, index, 3);
+              return;
+            }
+          }
+          throw new Error(`Motion for hotkey “${hotkey.name}” was not found`);
+        }
+        throw new Error(`VTube Studio hotkey action “${hotkey.action}” is not supported yet`);
+      };
       resizeObserver = new ResizeObserver(fit);
       resizeObserver.observe(containerRef.current);
       fit();
@@ -130,6 +169,7 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, onReady,
 
     return () => {
       disposed = true;
+      hotkeyHandlerRef.current = null;
       resizeObserver?.disconnect();
       if (liveModel && !liveModel.destroyed) liveModel.destroy({ children: true, texture: true, baseTexture: true });
       app?.destroy(false, { children: false, texture: false, baseTexture: false });

@@ -31,10 +31,10 @@ Security model:
 
 1. Desktop advertises only on the local network.
 2. First connection requires approval/pairing.
-3. A remembered device receives a revocable random token.
+3. A remembered device receives a random 256-bit token; the desktop persists only its SHA-256 hash and iOS stores the token in the device-only Keychain.
 4. Raw camera images are never transmitted.
 
-The current milestone implements discovery and framed transport. Pairing persistence is required before the first public release.
+The current milestone implements discovery, framed transport and persistent pairing. LumaLink v1 is local-network WebSocket rather than TLS, so a future public release should add encrypted transport and a trusted-device revocation UI for hostile/shared LANs.
 
 ## Frame processing
 

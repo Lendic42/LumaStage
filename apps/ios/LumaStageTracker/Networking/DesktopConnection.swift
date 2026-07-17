@@ -19,9 +19,12 @@ final class DesktopConnection: ObservableObject {
     @Published private(set) var services: [DesktopService] = []
     @Published private(set) var connectedService: DesktopService?
     @Published private(set) var isConnected = false
+    @Published private(set) var errorMessage: String?
 
     private var browser: NWBrowser?
     private var connection: NWConnection?
+    private var pendingService: DesktopService?
+    private var enteredPairingCode = ""
 
     func startBrowsing() {
         guard browser == nil else { return }
@@ -36,8 +39,12 @@ final class DesktopConnection: ObservableObject {
         self.browser = browser
     }
 
-    func connect(to service: DesktopService) {
+    func connect(to service: DesktopService, pairingCode: String) {
         connection?.cancel()
+        errorMessage = nil
+        isConnected = false
+        pendingService = service
+        enteredPairingCode = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let websocket = NWProtocolWebSocket.Options()
         websocket.autoReplyPing = true
@@ -49,13 +56,16 @@ final class DesktopConnection: ObservableObject {
         connection.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
                 guard let self else { return }
+                guard self.connection === connection else { return }
                 switch state {
                 case .ready:
-                    self.connectedService = service
-                    self.isConnected = true
-                    self.sendHello()
-                    self.receiveLoop()
-                case .failed, .cancelled:
+                    self.sendHello(for: service)
+                    self.receiveLoop(on: connection)
+                case let .failed(error):
+                    self.errorMessage = error.localizedDescription
+                    self.isConnected = false
+                    self.connectedService = nil
+                case .cancelled:
                     self.isConnected = false
                     self.connectedService = nil
                 default: break
@@ -77,16 +87,25 @@ final class DesktopConnection: ObservableObject {
         connection?.cancel()
         connection = nil
         isConnected = false
+        connectedService = nil
+        pendingService = nil
     }
 
-    private func sendHello() {
-        let payload: [String: Any] = [
+    func hasStoredCredential(for service: DesktopService) -> Bool {
+        CredentialStore.token(for: credentialKey(for: service)) != nil
+    }
+
+    private func sendHello(for service: DesktopService) {
+        let storedToken = CredentialStore.token(for: credentialKey(for: service))
+        let token = storedToken ?? enteredPairingCode
+        var payload: [String: Any] = [
             "type": "hello",
             "protocol": 1,
             "deviceId": UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString,
             "deviceName": UIDevice.current.name,
             "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
         ]
+        if !token.isEmpty { payload["token"] = token }
         if let data = try? JSONSerialization.data(withJSONObject: payload) { send(data) }
     }
 
@@ -95,13 +114,46 @@ final class DesktopConnection: ObservableObject {
         connection?.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in })
     }
 
-    private func receiveLoop() {
-        connection?.receiveMessage { [weak self] _, _, _, error in
+    private func receiveLoop(on connection: NWConnection) {
+        connection.receiveMessage { [weak self] content, _, _, error in
             Task { @MainActor in
-                guard let self, error == nil, self.isConnected else { return }
-                self.receiveLoop()
+                guard let self, error == nil else { return }
+                guard self.connection === connection else { return }
+                if let content { self.handleServerMessage(content) }
+                guard self.connection === connection else { return }
+                self.receiveLoop(on: connection)
             }
         }
     }
-}
 
+    private func handleServerMessage(_ data: Data) {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let type = object["type"] as? String
+        else { return }
+
+        if type == "hello-accepted", let service = pendingService {
+            if let token = object["deviceToken"] as? String, !token.isEmpty {
+                CredentialStore.setToken(token, for: credentialKey(for: service))
+            }
+            connectedService = service
+            isConnected = true
+            errorMessage = nil
+            enteredPairingCode = ""
+        } else if type == "pairing-required" {
+            errorMessage = object["message"] as? String ?? "Pairing code was rejected"
+            if let service = pendingService {
+                CredentialStore.removeToken(for: credentialKey(for: service))
+            }
+            isConnected = false
+            connectedService = nil
+            connection?.cancel()
+            connection = nil
+        }
+    }
+
+    private func credentialKey(for service: DesktopService) -> String {
+        let encoded = Data(service.name.utf8).base64EncodedString()
+        return "lumastage.desktop-token.\(encoded)"
+    }
+}

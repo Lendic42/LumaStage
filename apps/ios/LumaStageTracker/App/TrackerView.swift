@@ -3,6 +3,7 @@ import SwiftUI
 struct TrackerView: View {
     @EnvironmentObject private var network: DesktopConnection
     @EnvironmentObject private var tracker: FaceTrackingController
+    @State private var pairingCode = ""
 
     var body: some View {
         ZStack {
@@ -69,9 +70,14 @@ struct TrackerView: View {
             if network.services.isEmpty {
                 HStack { ProgressView(); Text("Searching on local network…").foregroundStyle(.secondary) }
             } else {
+                TextField("6-digit code from desktop", text: $pairingCode)
+                    .keyboardType(.numberPad)
+                    .textContentType(.oneTimeCode)
+                    .padding(12)
+                    .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
                 ForEach(network.services) { service in
                     Button {
-                        network.connect(to: service)
+                        network.connect(to: service, pairingCode: pairingCode)
                     } label: {
                         HStack {
                             VStack(alignment: .leading) {
@@ -86,6 +92,10 @@ struct TrackerView: View {
                         .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
                     }
                     .buttonStyle(.plain)
+                    .disabled(pairingCode.count != 6 && !network.hasStoredCredential(for: service))
+                }
+                if let message = network.errorMessage {
+                    Text(message).font(.caption).foregroundStyle(.red)
                 }
             }
         }
@@ -136,4 +146,3 @@ private extension View {
             .overlay(RoundedRectangle(cornerRadius: 22).stroke(.white.opacity(0.08)))
     }
 }
-

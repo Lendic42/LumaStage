@@ -1,5 +1,6 @@
-:root { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #edf0ff; background: #080a12; font-synthesis: none; }
+:root { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #edf0ff; background: transparent; font-synthesis: none; }
 * { box-sizing: border-box; }
+html, body, #root { background: transparent; }
 body { margin: 0; min-width: 1080px; min-height: 680px; overflow: hidden; }
 button { font: inherit; color: inherit; }
 .shell { min-height: 100vh; display: grid; grid-template-columns: 88px 1fr; background: radial-gradient(circle at 78% 5%, #22234a 0, transparent 30%), #090b14; }
@@ -24,6 +25,7 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .stage-card { display: grid; grid-template-rows: 55px 1fr; }
 .stage-toolbar { padding: 0 18px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ffffff0b; font-size: 12px; color: #bbc0d5; }
 .stage-toolbar button { border: 0; background: transparent; color: #797f99; margin-left: 12px; font-size: 11px; }
+.stage-toolbar button:hover { color: #d9dcff; cursor: pointer; }
 .stage { position: relative; overflow: hidden; display: grid; place-items: center; background: radial-gradient(circle at 50% 55%, #383062 0, #181a2b 36%, #10131e 72%); }
 .live2d-layer { position: absolute; inset: 0; z-index: 2; }
 .live2d-layer canvas { width: 100%; height: 100%; display: block; }
@@ -52,4 +54,21 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .meter { display: grid; grid-template-columns: 54px 1fr 30px; align-items: center; gap: 8px; margin: 11px 0; color: #898fa9; font-size: 10px; }
 .meter > div { height: 4px; border-radius: 5px; background: #262a3b; overflow: hidden; }.meter i { display: block; height: 100%; background: linear-gradient(90deg, #735fff, #e267c2); border-radius: inherit; }.meter b { font-weight: 500; color: #646a82; text-align: right; }
 .hint { display: flex; align-items: center; gap: 13px; }.hint > div { min-width: 35px; height: 35px; display: grid; place-items: center; border-radius: 10px; background: #5e50c522; color: #9d8dff; }.hint p { margin: 0; }.hint b { color: #ccd0e2; }.error { color: #ff7892 !important; }
+.hint strong { color: #aef4d8; font-size: 15px; letter-spacing: .16em; white-space: nowrap; }
+.trust-reset { display: block; margin-top: 7px; padding: 0; border: 0; background: transparent; color: #777d98; font-size: 9px; text-decoration: underline; cursor: pointer; }
+.hotkeys { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.hotkeys button { min-width: 0; padding: 9px; text-align: left; border: 1px solid #ffffff12; border-radius: 9px; background: #ffffff07; cursor: pointer; }
+.hotkeys button:hover { border-color: #8d78ff66; background: #7660ff16; }
+.hotkeys span, .hotkeys small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hotkeys span { color: #cdd1e5; font-size: 10px; }.hotkeys small { margin-top: 3px; color: #656a82; font-size: 8px; }
+.exit-overlay { display: none; }
+.shell.overlay { display: block; background: transparent; }
+.shell.overlay .rail, .shell.overlay .workspace > header, .shell.overlay .inspector, .shell.overlay .stage-toolbar { display: none; }
+.shell.overlay .workspace { width: 100vw; height: 100vh; padding: 0; }
+.shell.overlay .stage-grid { display: block; height: 100vh; }
+.shell.overlay .stage-card { width: 100vw; height: 100vh; display: block; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.shell.overlay .stage { width: 100%; height: 100%; background: transparent; }
+.shell.overlay .grid, .shell.overlay .tracking-pill { display: none; }
+.shell.overlay .exit-overlay { display: block; position: absolute; z-index: 9; top: 16px; right: 16px; padding: 9px 12px; border: 1px solid #ffffff20; border-radius: 10px; background: #090b14bb; color: #b9bfd5; opacity: .18; }
+.shell.overlay .exit-overlay:hover { opacity: 1; cursor: pointer; }
 @media (max-height: 760px) { .avatar-wrap { transform: scale(.8) !important; } .workspace { padding-bottom: 18px; }.stage-grid { height: calc(100vh - 120px); } }

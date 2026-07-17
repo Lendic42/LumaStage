@@ -33,7 +33,7 @@ npm install
 npm run dev
 ```
 
-The desktop listens on TCP port `39510` and advertises `_lumastage._tcp` through Bonjour. You can run it without an iPhone; the stage stays in its neutral pose.
+The desktop listens on TCP port `39510` and advertises `_lumastage._tcp` through Bonjour. The first iPhone connection requires the six-digit code displayed by the desktop; successful pairing creates a random per-device token stored locally on both devices. You can run it without an iPhone; the stage stays in its neutral pose.
 
 ## Enable Cubism rendering
 
@@ -46,6 +46,8 @@ After that, import a folder containing one `*.model3.json`. LumaStage serves mod
 
 The importer rejects absolute/path-traversal asset references and reports missing files before rendering.
 
+The stage toolbar includes a transparent always-on-top overlay for OBS/window capture. Imported VTube Studio expression and motion hotkeys are shown in the inspector; actions that cannot be mapped safely are reported instead of guessed.
+
 ## Build distributable desktop apps
 
 ```bash
@@ -53,7 +55,7 @@ npm run package:mac
 npm run package:win
 ```
 
-Windows packaging runs on a Windows host; the repository CI builds both Windows and macOS artifacts.
+Electron Builder can cross-package Windows x64 from macOS; the repository CI also builds on native Windows and macOS runners. Runtime validation should still be performed on each target OS before publishing a release.
 
 ## License
 

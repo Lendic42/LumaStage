@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LUMALINK_PROTOCOL, parseLumaLinkMessage } from "../src/index.js";
+import { LUMALINK_PROTOCOL, parseLumaLinkMessage, parseLumaLinkServerMessage } from "../src/index.js";
 
 describe("LumaLink protocol", () => {
   it("accepts a valid tracking frame", () => {
@@ -38,5 +38,20 @@ describe("LumaLink protocol", () => {
 
   it("rejects messages larger than 64 KiB before parsing", () => {
     expect(() => parseLumaLinkMessage(" ".repeat(64 * 1024 + 1))).toThrow(/64 KiB/);
+  });
+});
+
+describe("LumaLink server messages", () => {
+  it("accepts a pairing response with a durable device token", () => {
+    const message = parseLumaLinkServerMessage(JSON.stringify({
+      type: "hello-accepted",
+      protocol: 1,
+      deviceToken: "a".repeat(64)
+    }));
+    expect(message.type).toBe("hello-accepted");
+  });
+
+  it("rejects unknown server messages", () => {
+    expect(() => parseLumaLinkServerMessage('{"type":"nope"}')).toThrow();
   });
 });

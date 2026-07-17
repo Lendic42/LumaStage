@@ -14,6 +14,7 @@
 		77B3068A5858ABFCCCCCE716 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8C78460200717E3AF07D8167 /* Assets.xcassets */; };
 		8EC40DDC0FE0A22FCB2E7F55 /* LumaStageTrackerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E781E11119390549F032170A /* LumaStageTrackerApp.swift */; };
 		D6359932509DC6D5FF0F8630 /* FaceTrackingController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D137F7AC0DE9CFA9ABD29B39 /* FaceTrackingController.swift */; };
+		DD0940291CB8BA3893C48AE3 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71D9ECB28C7608431EF63565 /* CredentialStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -21,6 +22,7 @@
 		2D2F985A86FF4C37B05A0F67 /* TrackingFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingFrame.swift; sourceTree = "<group>"; };
 		4B34BD640C7B5968B84E7425 /* DesktopConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopConnection.swift; sourceTree = "<group>"; };
 		70DF6C1D652A6542ACC82EAA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		71D9ECB28C7608431EF63565 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
 		8C78460200717E3AF07D8167 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C58066EA2ECE237AA432D704 /* TrackerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackerView.swift; sourceTree = "<group>"; };
 		D137F7AC0DE9CFA9ABD29B39 /* FaceTrackingController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceTrackingController.swift; sourceTree = "<group>"; };
@@ -41,6 +43,7 @@
 		1E0666AEC7DC2F8282971EDA /* Networking */ = {
 			isa = PBXGroup;
 			children = (
+				71D9ECB28C7608431EF63565 /* CredentialStore.swift */,
 				4B34BD640C7B5968B84E7425 /* DesktopConnection.swift */,
 			);
 			path = Networking;
@@ -154,6 +157,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DD0940291CB8BA3893C48AE3 /* CredentialStore.swift in Sources */,
 				0AE7F36C6A1C08EB3602643D /* DesktopConnection.swift in Sources */,
 				6148804ACD9F3ABB11E5FB39 /* FaceCameraView.swift in Sources */,
 				D6359932509DC6D5FF0F8630 /* FaceTrackingController.swift in Sources */,

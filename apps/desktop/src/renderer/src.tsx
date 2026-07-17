@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { DesktopStatus, ImportedModel, LumaStageBridge } from "../shared/bridge";
+import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge } from "../shared/bridge";
 import type { CubismCoreStatus } from "../shared/bridge";
 import { Live2DStage } from "./components/Live2DStage";
 import "./style.css";
@@ -49,13 +49,15 @@ function Meter({ label, value }: { label: string; value: number }) {
 
 function App() {
   const [frame, setFrame] = useState(neutral);
-  const [status, setStatus] = useState<DesktopStatus>({ port: 39510, connectedDevices: 0 });
+  const [status, setStatus] = useState<DesktopStatus>({ port: 39510, connectedDevices: 0, pairingCode: "------", trustedDevices: 0 });
   const [model, setModel] = useState<ImportedModel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rendererError, setRendererError] = useState<string | null>(null);
   const [rendererReady, setRendererReady] = useState(false);
   const [coreStatus, setCoreStatus] = useState<CubismCoreStatus>({ available: false });
   const [calibrationNonce, setCalibrationNonce] = useState(0);
+  const [overlayMode, setOverlayMode] = useState(false);
+  const [hotkeyRequest, setHotkeyRequest] = useState<{ nonce: number; hotkey: ImportedHotkey } | null>(null);
 
   useEffect(() => {
     const offFrame = window.lumastage.onTrackingFrame(setFrame);
@@ -63,6 +65,14 @@ function App() {
     void window.lumastage.getCubismCoreStatus().then(setCoreStatus);
     return () => { offFrame(); offStatus(); };
   }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && overlayMode) void toggleOverlay(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [overlayMode]);
 
   const connectionLabel = useMemo(() => status.connectedDevices > 0 ? "iPhone connected" : "Waiting for iPhone", [status]);
   const importModel = async () => {
@@ -82,8 +92,13 @@ function App() {
       setRendererError(reason instanceof Error ? reason.message : String(reason));
     }
   };
+  const toggleOverlay = async (enabled = !overlayMode) => {
+    try { setOverlayMode(await window.lumastage.setOverlayMode(enabled)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const triggerHotkey = (hotkey: ImportedHotkey) => setHotkeyRequest({ nonce: Date.now(), hotkey });
 
-  return <main className="shell">
+  return <main className={`shell${overlayMode ? " overlay" : ""}`}>
     <aside className="rail">
       <div className="logo"><div>LS</div><span>Luma<br />Stage</span></div>
       <nav><button className="active">◈<span>Stage</span></button><button>◇<span>Models</span></button><button>⌁<span>Tracking</span></button><button>⚙<span>Settings</span></button></nav>
@@ -94,14 +109,15 @@ function App() {
       <header><div><small>LIVE WORKSPACE</small><h1>Stage</h1></div><div className={`connection ${status.connectedDevices ? "online" : ""}`}><i />{connectionLabel}<span>:{status.port}</span></div></header>
       <div className="stage-grid">
         <section className="stage-card">
-          <div className="stage-toolbar"><span>{model?.name ?? "Preview avatar"}</span><div><button>⌖ Fit</button><button>▣ Transparent</button></div></div>
-          <div className="stage"><div className="grid" />{!rendererReady && <AvatarPreview frame={frame} />}<Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} onReady={setRendererReady} onError={setRendererError} /><div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div></div>
+          <div className="stage-toolbar"><span>{model?.name ?? "Preview avatar"}</span><div><button>⌖ Fit</button><button onClick={() => void toggleOverlay()}>{overlayMode ? "Exit overlay" : "▣ Transparent"}</button></div></div>
+          <div className="stage"><div className="grid" />{!rendererReady && <AvatarPreview frame={frame} />}<Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} onReady={setRendererReady} onError={setRendererError} /><div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div>{overlayMode && <button className="exit-overlay" onClick={() => void toggleOverlay(false)}>Exit overlay · Esc</button>}</div>
         </section>
 
         <aside className="inspector">
           <section className="panel model-panel"><small>ACTIVE MODEL</small><h2>{model?.vTubeModelName ?? model?.name ?? "No model loaded"}</h2><p>{model ? `${model.textureCount} textures · ${model.expressionCount} expressions · ${model.motionCount} motions${model.vTubeParameterMappings.length ? ` · ${model.vTubeParameterMappings.length} VTS mappings` : ""}` : "Import a Cubism/VTube Studio model folder to begin."}</p>{model?.missingFiles.length ? <p className="error">Missing: {model.missingFiles.join(", ")}</p> : null}<button className="primary" onClick={importModel}>＋ Import model folder</button>{!coreStatus.available && <button className="secondary" onClick={installCore}>Install official Cubism Core</button>}{rendererError && <p className="error">{rendererError}</p>}{error && <p className="error">{error}</p>}</section>
           <section className="panel"><div className="panel-heading"><h3>Live signals</h3><span>{frame.sequence ? `#${frame.sequence}` : "idle"}</span></div><Meter label="Mouth" value={frame.blendShapes.jawOpen ?? 0} /><Meter label="Blink L" value={frame.blendShapes.eyeBlinkLeft ?? 0} /><Meter label="Blink R" value={frame.blendShapes.eyeBlinkRight ?? 0} /><Meter label="Smile" value={((frame.blendShapes.mouthSmileLeft ?? 0) + (frame.blendShapes.mouthSmileRight ?? 0)) / 2} /><button className="secondary" disabled={!frame.faceFound} onClick={() => setCalibrationNonce((value) => value + 1)}>◎ Calibrate neutral pose</button></section>
-          <section className="panel hint"><div>⌁</div><p><b>Connect Tracker</b><br />Open LumaStage Tracker on a TrueDepth iPhone connected to this network.</p></section>
+          {model?.vTubeHotkeys.length ? <section className="panel"><div className="panel-heading"><h3>Model hotkeys</h3><span>{model.vTubeHotkeys.length}</span></div><div className="hotkeys">{model.vTubeHotkeys.map((hotkey, index) => <button key={hotkey.id || `${hotkey.name}-${index}`} onClick={() => triggerHotkey(hotkey)}><span>{hotkey.name || hotkey.action}</span><small>{hotkey.action}</small></button>)}</div></section> : null}
+          <section className="panel hint"><div>⌁</div><p><b>Connect Tracker</b><br />Enter pairing code <strong>{status.pairingCode}</strong> on the iPhone. Only paired devices can stream.{status.trustedDevices > 0 && <button className="trust-reset" onClick={() => void window.lumastage.forgetTrustedDevices()}>Forget {status.trustedDevices} paired device{status.trustedDevices === 1 ? "" : "s"}</button>}</p></section>
         </aside>
       </div>
     </section>

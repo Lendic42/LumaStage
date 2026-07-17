@@ -35,6 +35,18 @@ export const trackingFrameSchema = z.object({
   blendShapes: z.record(z.string().min(1).max(64), unitNumber)
 });
 
+export const helloAcceptedSchema = z.object({
+  type: z.literal("hello-accepted"),
+  protocol: z.literal(LUMALINK_PROTOCOL),
+  deviceToken: z.string().min(32).max(256).optional()
+});
+
+export const pairingRequiredSchema = z.object({
+  type: z.literal("pairing-required"),
+  protocol: z.literal(LUMALINK_PROTOCOL),
+  message: z.string().min(1).max(256)
+});
+
 export const lumaLinkMessageSchema = z.discriminatedUnion("type", [
   helloMessageSchema,
   trackingFrameSchema
@@ -43,10 +55,19 @@ export const lumaLinkMessageSchema = z.discriminatedUnion("type", [
 export type HelloMessage = z.infer<typeof helloMessageSchema>;
 export type TrackingFrame = z.infer<typeof trackingFrameSchema>;
 export type LumaLinkMessage = z.infer<typeof lumaLinkMessageSchema>;
+export type HelloAccepted = z.infer<typeof helloAcceptedSchema>;
+export type PairingRequired = z.infer<typeof pairingRequiredSchema>;
+export type LumaLinkServerMessage = HelloAccepted | PairingRequired;
 
 export function parseLumaLinkMessage(input: string): LumaLinkMessage {
   if (input.length > 64 * 1024) {
     throw new Error("LumaLink message exceeds 64 KiB");
   }
   return lumaLinkMessageSchema.parse(JSON.parse(input));
+}
+
+export function parseLumaLinkServerMessage(input: string): LumaLinkServerMessage {
+  if (input.length > 4 * 1024) throw new Error("LumaLink server message exceeds 4 KiB");
+  const parsed = JSON.parse(input);
+  return parsed.type === "hello-accepted" ? helloAcceptedSchema.parse(parsed) : pairingRequiredSchema.parse(parsed);
 }

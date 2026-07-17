@@ -24,3 +24,7 @@ scripts/build-unsigned-ipa.sh
 ```
 
 The resulting `outputs/LumaStage-Tracker-0.1.0-unsigned.ipa` intentionally contains no personal Apple certificate or provisioning profile. The sideload tool signs it with the user's own identity during installation.
+
+## Connect
+
+Keep the iPhone and desktop on the same local network. Start LumaStage Desktop, enter its six-digit pairing code in the tracker, then choose the discovered desktop. The tracker stores the returned random device token in the iOS Keychain as a device-only credential, so later connections do not require the code unless desktop trust data is removed.
