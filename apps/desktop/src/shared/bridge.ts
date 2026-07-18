@@ -234,6 +234,19 @@ export interface DesktopStatus {
   hostAddresses: string[];
 }
 
+/** System webcam output: character only, transparent background (not the Transparent overlay). */
+export interface VirtualCameraStatus {
+  active: boolean;
+  backend: "unity-capture" | "none";
+  deviceName: string | null;
+  width: number;
+  height: number;
+  fps: number;
+  error: string | null;
+  driverInstalled: boolean;
+  framesSent: number;
+}
+
 export interface LumaStageBridge {
   onTrackingFrame(listener: (frame: TrackingFrame) => void): () => void;
   onDesktopStatus(listener: (status: DesktopStatus) => void): () => void;
@@ -269,6 +282,11 @@ export interface LumaStageBridge {
   getCubismCoreStatus(): Promise<CubismCoreStatus>;
   installCubismCore(): Promise<CubismCoreStatus | null>;
   setOverlayMode(enabled: boolean): Promise<boolean>;
+  /** Start/stop system virtual webcam (character + transparent bg). */
+  setVirtualCamera(enabled: boolean): Promise<VirtualCameraStatus>;
+  getVirtualCameraStatus(): Promise<VirtualCameraStatus>;
+  /** Push one RGBA frame (character only). */
+  pushVirtualCameraFrame(frame: { width: number; height: number; rgba: ArrayBuffer }): Promise<boolean>;
   forgetTrustedDevices(): Promise<boolean>;
   resolvePluginAuthorization(id: string, approved: boolean): Promise<boolean>;
   forgetPluginAccess(): Promise<boolean>;
