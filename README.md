@@ -37,9 +37,11 @@ npm run dev
 
 The desktop listens on TCP port `39510` and advertises `_lumastage._tcp` through Bonjour. The first iPhone connection requires the six-digit code displayed by the desktop; successful pairing creates a random per-device token stored locally on both devices. You can run it without an iPhone; the stage stays in its neutral pose.
 
+The desktop navigation separates the live **Stage**, persistent **Models** library, a full **Tracking** signal dashboard and **Settings**. Each page scrolls independently, so adding scenes, items or model controls cannot squeeze the main navigation out of the window. The layout is also validated down to a 760-pixel-wide desktop window.
+
 ## Enable Cubism rendering
 
-LumaStage does not redistribute the proprietary Live2D Cubism Core. When Core is missing, the model panel shows **Install Cubism Core automatically**. After explicit license confirmation, LumaStage downloads only `live2dcubismcore.min.js` from Live2D's official `cubism.live2d.com` host, validates it and stores it in the application's private user-data directory. If the official download is unavailable, the same flow can open Live2D's SDK page or install the file from a previously downloaded **Cubism SDK for Web** package. The proprietary file is never committed to this repository.
+LumaStage does not redistribute the proprietary Live2D Cubism Core. When Core is missing or incompatible, both the model panel and **Settings** show an automatic install/replace button. After explicit license confirmation, LumaStage downloads only the compatible Cubism 5 `live2dcubismcore.min.js` from Live2D's official `cubism.live2d.com` host, validates its renderer ABI and stores it in the application's private user-data directory. If the official download is unavailable, the same flow can open Live2D's SDK page or install the file from a previously downloaded **Cubism SDK for Web** package. The proprietary file is never committed to this repository.
 
 After that, import a folder containing one `*.model3.json`. LumaStage serves model assets through a sandboxed read-only protocol, renders physics/pose/expressions/motions through the Cubism adapter and applies either:
 

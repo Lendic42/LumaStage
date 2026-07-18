@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import type { TrackingFrame } from "@lumastage/protocol";
 import { mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge";
+import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge";
 import type { CubismCoreStatus } from "../shared/bridge";
 import { Live2DStage } from "./components/Live2DStage";
 import "./style.css";
@@ -131,6 +131,46 @@ function MappingEditor({ model, frame, onClose, onSaved }: { model: ImportedMode
   </section></div>;
 }
 
+type AppView = "stage" | "models" | "tracking" | "settings";
+
+function ModelsView({ library, model, onImport, onLoad }: { library: ModelLibrary; model: ImportedModel | null; onImport(): void; onLoad(modelID: string): void }) {
+  return <div className="view-page">
+    <section className="view-hero models-hero"><div><small>VTS-COMPATIBLE LIBRARY</small><h2>Your models, ready to perform</h2><p>Imported Cubism and VTube Studio folders stay available here. Switch models without selecting the folder again.</p></div><button className="hero-action" onClick={onImport}>＋ Import model</button></section>
+    {library.models.length ? <section className="model-grid">{library.models.map((entry, index) => <article className={`model-card${entry.active ? " active" : ""}`} key={entry.modelID}>
+      <div className={`model-art tone-${index % 4}`}><span>{entry.modelName.trim().slice(0, 2).toUpperCase() || "2D"}</span>{entry.active && <b>LIVE</b>}</div>
+      <div className="model-card-body"><small>{entry.vTubeModelName || "Cubism model"}</small><h3>{entry.modelName}</h3><p>{entry.active && model ? `${model.textureCount} textures · ${model.expressionCount} expressions · ${model.motionCount} motions` : "Compatible model saved in your local library"}</p><button className={entry.active ? "secondary current" : "primary"} disabled={entry.active} onClick={() => onLoad(entry.modelID)}>{entry.active ? "✓ On stage" : "Use on stage"}</button></div>
+    </article>)}</section> : <section className="empty-library"><div>◇</div><h2>No models imported yet</h2><p>Select the folder containing a <code>*.model3.json</code> file or an exported VTube Studio model.</p><button className="hero-action" onClick={onImport}>Choose model folder</button></section>}
+  </div>;
+}
+
+function TrackingView({ frame, status, model, onCalibrate, onEditMappings }: { frame: TrackingFrame; status: DesktopStatus; model: ImportedModel | null; onCalibrate(): void; onEditMappings(): void }) {
+  const inputs = mapARKitToVTubeInputs(frame);
+  const smile = ((frame.blendShapes.mouthSmileLeft ?? 0) + (frame.blendShapes.mouthSmileRight ?? 0)) / 2;
+  const signals = [
+    ["Yaw", Math.abs(inputs.FaceAngleX ?? 0) / 30], ["Pitch", Math.abs(inputs.FaceAngleY ?? 0) / 30], ["Roll", Math.abs(inputs.FaceAngleZ ?? 0) / 30],
+    ["Blink L", 1 - (inputs.EyeOpenLeft ?? 1)], ["Blink R", 1 - (inputs.EyeOpenRight ?? 1)], ["Gaze X", Math.abs(inputs.EyeLeftX ?? 0)],
+    ["Gaze Y", Math.abs(inputs.EyeLeftY ?? 0)], ["Mouth", frame.blendShapes.jawOpen ?? 0], ["Smile", smile]
+  ] as const;
+  return <div className="view-page">
+    <section className={`tracking-hero${frame.faceFound ? " online" : ""}`}><div className="face-orbit"><div>⌁</div><i /></div><div><small>TRUEDEPTH LINK</small><h2>{frame.faceFound ? "Face tracking is live" : status.connectedDevices ? "iPhone connected — find your face" : "Connect your iPhone tracker"}</h2><p>{status.connectedDevices ? `${status.connectedDevices} secure tracker connection${status.connectedDevices === 1 ? "" : "s"} · frame ${frame.sequence || "idle"}` : <>Enter pairing code <strong>{status.pairingCode}</strong> in the LumaStage iPhone app.</>}</p></div><div className="tracking-actions"><button className="hero-action" disabled={!frame.faceFound} onClick={onCalibrate}>◎ Calibrate</button>{model && <button className="ghost-action" onClick={onEditMappings}>Edit mappings</button>}</div></section>
+    <section className="signal-grid">{signals.map(([label, value]) => <article className="signal-card" key={label}><div><span>{label}</span><b>{Math.max(0, Math.min(1, value)).toFixed(2)}</b></div><div className="large-meter"><i style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }} /></div></article>)}</section>
+    <section className="privacy-strip"><div>♢</div><p><b>Private by design</b><br />Only animation values are sent over your local network. LumaStage does not stream or save the camera image.</p><code>ws://local:{status.port}</code></section>
+  </div>;
+}
+
+function SettingsView({ coreStatus, coreInstalling, status, onInstallCore, onForgetTrackers, onForgetPlugins }: { coreStatus: CubismCoreStatus; coreInstalling: boolean; status: DesktopStatus; onInstallCore(): void; onForgetTrackers(): void; onForgetPlugins(): void }) {
+  const coreLabel = coreStatus.available ? "Compatible Core installed" : coreStatus.installed ? "Incompatible Core detected" : "Cubism Core is missing";
+  return <div className="view-page">
+    <section className="view-hero settings-hero"><div><small>LOCAL & OPEN</small><h2>Studio settings</h2><p>Renderer, tracker and plugin access stay under your control on this computer.</p></div></section>
+    <section className="settings-grid">
+      <article className="setting-card featured"><div className="setting-icon">◇</div><div><small>LIVE2D RENDERER</small><h3>{coreLabel}</h3><p>{coreStatus.available ? "Official Cubism Core is ready for compatible Live2D models." : "Install the official compatible Cubism Core directly from Live2D."}</p>{!coreStatus.available && <button className="hero-action" disabled={coreInstalling} onClick={onInstallCore}>{coreInstalling ? "Downloading from Live2D…" : coreStatus.installed ? "Replace with compatible Core" : "Install Cubism Core"}</button>}</div><span className={`status-badge${coreStatus.available ? " good" : " warn"}`}>{coreStatus.available ? "READY" : "ACTION"}</span></article>
+      <article className="setting-card"><div className="setting-icon">⌁</div><div><small>IPHONE TRACKER</small><h3>Port {status.port}</h3><p>{status.connectedDevices} connected · {status.trustedDevices} paired device{status.trustedDevices === 1 ? "" : "s"}</p>{status.trustedDevices > 0 && <button className="text-action" onClick={onForgetTrackers}>Forget paired devices</button>}</div></article>
+      <article className="setting-card"><div className="setting-icon">◫</div><div><small>VTS PLUGIN API</small><h3>127.0.0.1:{status.vtsApiPort}</h3><p>{status.vtsApiActive ? "Local compatibility API is active." : "The compatibility API is unavailable."} {status.allowedPlugins} allowed plugin{status.allowedPlugins === 1 ? "" : "s"}.</p>{status.allowedPlugins > 0 && <button className="text-action" onClick={onForgetPlugins}>Revoke plugin permissions</button>}</div><span className={`status-badge${status.vtsApiActive ? " good" : " warn"}`}>{status.vtsApiActive ? "ACTIVE" : "OFFLINE"}</span></article>
+      <article className="setting-card"><div className="setting-icon">↗</div><div><small>STREAM OUTPUT</small><h3>Transparent capture</h3><p>Use the Transparent button on Stage for a clean OBS or screen-capture source.</p></div></article>
+    </section>
+  </div>;
+}
+
 function App() {
   const [frame, setFrame] = useState(neutral);
   const [status, setStatus] = useState<DesktopStatus>({ port: 39510, connectedDevices: 0, pairingCode: "------", trustedDevices: 0, vtsApiPort: 8001, vtsApiActive: false, allowedPlugins: 0 });
@@ -153,6 +193,8 @@ function App() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const itemElements = useRef(new Map<string, HTMLImageElement>());
   const [mappingEditorOpen, setMappingEditorOpen] = useState(false);
+  const [activeView, setActiveView] = useState<AppView>("stage");
+  const [modelLibrary, setModelLibrary] = useState<ModelLibrary>({ models: [] });
 
   useEffect(() => {
     const offFrame = window.lumastage.onTrackingFrame(setFrame);
@@ -164,8 +206,10 @@ function App() {
     const offArtMeshTint = window.lumastage.onVtsArtMeshTint(setArtMeshTint);
     const offPhysicsControl = window.lumastage.onVtsPhysicsControl(setPhysicsControl);
     const offModelMove = window.lumastage.onVtsModelMove((value) => setModelMove({ nonce: Date.now(), value }));
-    const offSceneWorkspace = window.lumastage.onSceneWorkspaceChanged((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); });
+    const offSceneWorkspace = window.lumastage.onSceneWorkspaceChanged((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); void window.lumastage.getModelLibrary().then(setModelLibrary); });
+    void window.lumastage.getDesktopStatus().then(setStatus);
     void window.lumastage.getCubismCoreStatus().then(setCoreStatus);
+    void window.lumastage.getModelLibrary().then(setModelLibrary).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
     void window.lumastage.getSceneWorkspace().then((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
     return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); offExpressionActivation(); offArtMeshTint(); offPhysicsControl(); offModelMove(); offSceneWorkspace(); };
   }, []);
@@ -194,7 +238,7 @@ function App() {
     if (selectedItemId && activeScene?.items.some((item) => item.id === selectedItemId)) return;
     setSelectedItemId(activeScene?.items[0]?.id ?? null);
   }, [activeScene, selectedItemId]);
-  const applyWorkspace = (workspace: SceneWorkspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); };
+  const applyWorkspace = (workspace: SceneWorkspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); void window.lumastage.getModelLibrary().then(setModelLibrary); };
   const updateActiveScene = async (update: SceneUpdate) => {
     if (!activeScene) return;
     try { applyWorkspace(await window.lumastage.updateScene(activeScene.id, update)); }
@@ -233,8 +277,13 @@ function App() {
     try {
       const imported = await window.lumastage.importModel();
       setModel(imported);
-      if (imported) applyWorkspace(await window.lumastage.getSceneWorkspace());
+      if (imported) { applyWorkspace(await window.lumastage.getSceneWorkspace()); setActiveView("models"); }
     }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const loadLibraryModel = async (modelID: string) => {
+    setError(null);
+    try { applyWorkspace(await window.lumastage.loadModelFromLibrary(modelID)); setActiveView("stage"); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
   const installCore = async () => {
@@ -276,13 +325,13 @@ function App() {
   return <main className={`shell${overlayMode ? " overlay" : ""}`}>
     <aside className="rail">
       <div className="logo"><div>LS</div><span>Luma<br />Stage</span></div>
-      <nav><button className="active">◈<span>Stage</span></button><button>◇<span>Models</span></button><button>⌁<span>Tracking</span></button><button>⚙<span>Settings</span></button></nav>
+      <nav>{(["stage", "models", "tracking", "settings"] as const).map((view) => <button key={view} className={activeView === view ? "active" : ""} aria-current={activeView === view ? "page" : undefined} onClick={() => setActiveView(view)}>{view === "stage" ? "◈" : view === "models" ? "◇" : view === "tracking" ? "⌁" : "⚙"}<span>{view[0].toUpperCase() + view.slice(1)}</span></button>)}</nav>
       <div className="version">v0.1</div>
     </aside>
 
     <section className="workspace">
-      <header><div><small>LIVE WORKSPACE</small><h1>Stage</h1></div><div className={`connection ${status.connectedDevices ? "online" : ""}`}><i />{connectionLabel}<span>:{status.port}</span></div></header>
-      <div className="stage-grid">
+      <header><div><small>{activeView === "stage" ? "LIVE WORKSPACE" : activeView === "models" ? "MODEL LIBRARY" : activeView === "tracking" ? "FACIAL CAPTURE" : "PREFERENCES"}</small><h1>{activeView[0].toUpperCase() + activeView.slice(1)}</h1></div><div className={`connection ${status.connectedDevices ? "online" : ""}`}><i />{connectionLabel}<span>:{status.port}</span></div></header>
+      {activeView === "stage" && <div className="stage-grid">
         <section className="stage-card">
           <div className="stage-toolbar"><span>{activeScene?.name ?? "Main Stage"} · {model?.name ?? "Preview avatar"}</span><div><button onClick={() => void updateActiveScene({ transform: neutralSceneTransform })}>⌖ Fit</button><button onClick={() => void toggleOverlay()}>{overlayMode ? "Exit overlay" : "▣ Transparent"}</button></div></div>
           <div className="stage" style={stageStyle}>
@@ -334,7 +383,10 @@ function App() {
           <section className="panel hint"><div>⌁</div><p><b>Connect Tracker</b><br />Enter pairing code <strong>{status.pairingCode}</strong> on the iPhone. Only paired devices can stream.{status.trustedDevices > 0 && <button className="trust-reset" onClick={() => void window.lumastage.forgetTrustedDevices()}>Forget {status.trustedDevices} paired device{status.trustedDevices === 1 ? "" : "s"}</button>}</p></section>
           <section className="panel hint"><div>◫</div><p><b>Plugin API</b><br /><code>127.0.0.1:{status.vtsApiPort}</code> · {status.vtsApiActive ? "active" : "unavailable"}{status.allowedPlugins > 0 && <button className="trust-reset" onClick={() => void window.lumastage.forgetPluginAccess()}>Revoke {status.allowedPlugins} plugin permission{status.allowedPlugins === 1 ? "" : "s"}</button>}</p></section>
         </aside>
-      </div>
+      </div>}
+      {activeView === "models" && <ModelsView library={modelLibrary} model={model} onImport={() => void importModel()} onLoad={(modelID) => void loadLibraryModel(modelID)} />}
+      {activeView === "tracking" && <TrackingView frame={frame} status={status} model={model} onCalibrate={() => setCalibrationNonce((value) => value + 1)} onEditMappings={() => setMappingEditorOpen(true)} />}
+      {activeView === "settings" && <SettingsView coreStatus={coreStatus} coreInstalling={coreInstalling} status={status} onInstallCore={() => void installCore()} onForgetTrackers={() => void window.lumastage.forgetTrustedDevices()} onForgetPlugins={() => void window.lumastage.forgetPluginAccess()} />}
     </section>
     {(error || rendererError) && <div className="error-toast" role="alert">{error ?? rendererError}<button aria-label="Dismiss error" onClick={() => { setError(null); setRendererError(null); }}>×</button></div>}
     {mappingEditorOpen && model && <MappingEditor model={model} frame={frame} onClose={() => setMappingEditorOpen(false)} onSaved={(saved) => { setModel(saved); setMappingEditorOpen(false); }} />}

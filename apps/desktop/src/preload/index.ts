@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -53,7 +53,10 @@ const bridge: LumaStageBridge = {
     ipcRenderer.on("scene-workspace-changed", handler);
     return () => ipcRenderer.removeListener("scene-workspace-changed", handler);
   },
+  getDesktopStatus: () => ipcRenderer.invoke("get-desktop-status") as Promise<DesktopStatus>,
   importModel: () => ipcRenderer.invoke("import-model") as Promise<ImportedModel | null>,
+  getModelLibrary: () => ipcRenderer.invoke("get-model-library") as Promise<ModelLibrary>,
+  loadModelFromLibrary: (modelID) => ipcRenderer.invoke("load-library-model", modelID) as Promise<SceneWorkspace>,
   updateModelMappings: (mappings: VTubeParameterMapping[]) => ipcRenderer.invoke("update-model-mappings", mappings) as Promise<ImportedModel>,
   resetModelMappings: () => ipcRenderer.invoke("reset-model-mappings") as Promise<ImportedModel>,
   getSceneWorkspace: () => ipcRenderer.invoke("get-scene-workspace") as Promise<SceneWorkspace>,

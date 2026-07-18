@@ -10,7 +10,7 @@ import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HO
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
 import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
-import type { ArtMeshGeometry, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
+import type { ArtMeshGeometry, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, ModelLibrary, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -764,7 +764,10 @@ async function installOfficialCubismCore(): Promise<CubismCoreStatus | null> {
   try {
     const response = await net.fetch(LIVE2D_CORE_URL, { redirect: "follow" });
     if (!response.ok) throw new Error(`Live2D download returned HTTP ${response.status}`);
-    if (new URL(response.url).hostname !== "cubism.live2d.com") throw new Error("Live2D download redirected to an unexpected host");
+    // Electron may leave Response.url empty for net.fetch() even when the
+    // request succeeds. Only parse it when present; the requested URL itself
+    // is a fixed, trusted Live2D HTTPS endpoint.
+    if (response.url && new URL(response.url).hostname !== "cubism.live2d.com") throw new Error("Live2D download redirected to an unexpected host");
     return await validateAndInstallCubismCore(new Uint8Array(await response.arrayBuffer()));
   } catch (reason) {
     const fallback = await dialog.showMessageBox({
@@ -1033,6 +1036,20 @@ async function availableVtsModels(): Promise<Array<{ modelName: string; modelID:
   return [...available.values()];
 }
 
+async function publicModelLibrary(): Promise<ModelLibrary> {
+  const activeModelID = activeApiModel?.modelID;
+  return {
+    models: (await availableVtsModels()).map((entry) => ({
+      modelID: entry.modelID,
+      modelName: entry.modelName,
+      vTubeModelName: entry.vtsModelName,
+      vTubeModelIconName: entry.vtsModelIconName,
+      active: entry.modelID === activeModelID
+    })),
+    ...(activeModelID ? { activeModelID } : {})
+  };
+}
+
 async function loadVtsModel(modelID: string): Promise<"loaded" | "unloaded" | "not-found"> {
   const previous = activeApiModel;
   const scene = storedActiveScene();
@@ -1076,8 +1093,8 @@ function sendModelMovedEvent(): void {
   sendVtsEvent("ModelMovedEvent", { modelID: activeApiModel.modelID, modelName: activeApiModel.modelName, modelPosition: currentModelPosition() });
 }
 
-function publishStatus(): void {
-  const status: DesktopStatus = {
+function desktopStatus(): DesktopStatus {
+  return {
     port: TRACKING_PORT,
     connectedDevices: clients.size,
     pairingCode,
@@ -1086,7 +1103,10 @@ function publishStatus(): void {
     vtsApiActive,
     allowedPlugins: pluginTokens.size
   };
-  broadcast("desktop-status", status);
+}
+
+function publishStatus(): void {
+  broadcast("desktop-status", desktopStatus());
 }
 
 function acceptFrame(socket: WebSocket, frame: TrackingFrame): void {
@@ -1371,6 +1391,7 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   installAssetProtocols();
+  ipcMain.handle("get-desktop-status", desktopStatus);
   ipcMain.handle("import-model", async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
     if (result.canceled || !result.filePaths[0]) return null;
@@ -1385,6 +1406,12 @@ app.whenReady().then(async () => {
     }
     sendVtsEvent("ModelLoadedEvent", currentModelEventData(true));
     return model;
+  });
+  ipcMain.handle("get-model-library", publicModelLibrary);
+  ipcMain.handle("load-library-model", async (_event, requestedModelID: unknown) => {
+    if (typeof requestedModelID !== "string" || !requestedModelID.trim() || requestedModelID.length > 256) throw new Error("Invalid model ID");
+    if (await loadVtsModel(requestedModelID) !== "loaded") throw new Error("Model is no longer available in the library");
+    return sceneWorkspace();
   });
   ipcMain.handle("update-model-mappings", async (_event, requestedMappings: unknown) => {
     if (!activeImportedModel || !activeModelRoot) throw new Error("Import a model before editing tracking mappings");

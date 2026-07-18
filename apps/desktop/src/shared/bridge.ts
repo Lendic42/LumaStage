@@ -33,6 +33,19 @@ export interface ImportedModel {
   physicsGroups: Array<{ id: string; name: string }>;
 }
 
+export interface ModelLibraryEntry {
+  modelID: string;
+  modelName: string;
+  vTubeModelName: string;
+  vTubeModelIconName: string;
+  active: boolean;
+}
+
+export interface ModelLibrary {
+  models: ModelLibraryEntry[];
+  activeModelID?: string;
+}
+
 export interface ImportedHotkey {
   id: string;
   name: string;
@@ -193,7 +206,10 @@ export interface LumaStageBridge {
   onVtsPhysicsControl(listener: (state: VtsPhysicsControl) => void): () => void;
   onVtsModelMove(listener: (move: VtsModelMoveAnimation) => void): () => void;
   onSceneWorkspaceChanged(listener: (workspace: SceneWorkspace) => void): () => void;
+  getDesktopStatus(): Promise<DesktopStatus>;
   importModel(): Promise<ImportedModel | null>;
+  getModelLibrary(): Promise<ModelLibrary>;
+  loadModelFromLibrary(modelID: string): Promise<SceneWorkspace>;
   updateModelMappings(mappings: VTubeParameterMapping[]): Promise<ImportedModel>;
   resetModelMappings(): Promise<ImportedModel>;
   getSceneWorkspace(): Promise<SceneWorkspace>;
