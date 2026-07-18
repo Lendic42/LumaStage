@@ -1,7 +1,7 @@
 /**
  * Windows virtual webcam via Unity Capture shared memory (RGBA + alpha).
- * Device name: "Unity Video Capture" after free driver install.
- * https://github.com/schellingb/UnityCapture — NOT OBS.
+ * Device: "Unity Video Capture" after free driver install (not OBS).
+ * https://github.com/schellingb/UnityCapture
  */
 
 import { createRequire } from "node:module";
@@ -36,27 +36,24 @@ export interface VirtualCameraWriter {
   close(): void;
 }
 
-type KoffiModule = {
-  load(name: string): {
-    func(sig: string): (...args: never[]) => unknown;
-  };
-  view(ptr: unknown, length: number): ArrayBuffer;
-};
+// koffi is untyped here; wrap as loose callables to avoid never[] inference.
+type WinFn = (...args: unknown[]) => unknown;
 
-function loadKoffi(): KoffiModule | null {
+function loadKoffi(): { load: (name: string) => { func: (sig: string) => WinFn }; view: (ptr: unknown, length: number) => ArrayBuffer } | null {
   if (process.platform !== "win32") return null;
   try {
     const require = createRequire(import.meta.url);
-    return require("koffi") as KoffiModule;
+    return require("koffi") as {
+      load: (name: string) => { func: (sig: string) => WinFn };
+      view: (ptr: unknown, length: number) => ArrayBuffer;
+    };
   } catch {
     return null;
   }
 }
 
-/** Detect Unity Capture DirectShow filter registration. */
 export function isUnityCaptureInstalled(): boolean {
   if (process.platform !== "win32") return false;
-  // x64 CLSID slots from UnityCaptureFilter / pyvirtualcam
   const keys = [
     "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70010}",
     "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70011}",
@@ -93,8 +90,6 @@ export function createUnityCaptureWriter(options?: {
   const width = options?.width ?? VIRTUAL_CAMERA_DEFAULT.width;
   const height = options?.height ?? VIRTUAL_CAMERA_DEFAULT.height;
   const capNum = options?.capNum ?? 0;
-
-  // shared.inl: CapNum 0 uses NUL so names end without digit
   const suffix = capNum === 0 ? "" : String(capNum);
   const nameMutex = `UnityCapture_Mutx${suffix}`;
   const nameWant = `UnityCapture_Want${suffix}`;
@@ -123,7 +118,6 @@ export function createUnityCaptureWriter(options?: {
   const FILE_MAP_ALL_ACCESS = 0xf001f;
   const PAGE_READWRITE = 0x04;
   const INFINITE = 0xffffffff;
-  // (HANDLE)-1 for CreateFileMapping pagefile-backed section
   const INVALID_HANDLE_VALUE = 0xffffffff;
 
   const headerBytes = 32;
@@ -169,7 +163,6 @@ export function createUnityCaptureWriter(options?: {
       const dataSize = w * h * 4;
       if (frame.length < dataSize || dataSize > MAX_SHARED_IMAGE_SIZE) return;
 
-      // Flip vertically (DirectShow often expects bottom-up relative to canvas top-down)
       const row = w * 4;
       for (let y = 0; y < h; y++) {
         frame.copy(flipScratch, y * row, (h - 1 - y) * row, (h - y) * row);
@@ -180,11 +173,11 @@ export function createUnityCaptureWriter(options?: {
         mem.writeUInt32LE(MAX_SHARED_IMAGE_SIZE, 0);
         mem.writeInt32LE(w, 4);
         mem.writeInt32LE(h, 8);
-        mem.writeInt32LE(w, 12); // stride in pixels
-        mem.writeInt32LE(0, 16); // FORMAT_UINT8
-        mem.writeInt32LE(1, 20); // RESIZEMODE_LINEAR
-        mem.writeInt32LE(0, 24); // no mirror
-        mem.writeInt32LE(2_147_483_647, 28); // keep last frame
+        mem.writeInt32LE(w, 12);
+        mem.writeInt32LE(0, 16);
+        mem.writeInt32LE(1, 20);
+        mem.writeInt32LE(0, 24);
+        mem.writeInt32LE(2_147_483_647, 28);
         flipScratch.copy(mem, headerBytes, 0, dataSize);
       } finally {
         ReleaseMutex(hMutex);
