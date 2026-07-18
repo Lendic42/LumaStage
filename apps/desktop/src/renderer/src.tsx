@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge } from "../shared/bridge";
+import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, VtsParameterInjection } from "../shared/bridge";
 import type { CubismCoreStatus } from "../shared/bridge";
 import { Live2DStage } from "./components/Live2DStage";
 import "./style.css";
@@ -49,7 +49,7 @@ function Meter({ label, value }: { label: string; value: number }) {
 
 function App() {
   const [frame, setFrame] = useState(neutral);
-  const [status, setStatus] = useState<DesktopStatus>({ port: 39510, connectedDevices: 0, pairingCode: "------", trustedDevices: 0 });
+  const [status, setStatus] = useState<DesktopStatus>({ port: 39510, connectedDevices: 0, pairingCode: "------", trustedDevices: 0, vtsApiPort: 8001, vtsApiActive: false, allowedPlugins: 0 });
   const [model, setModel] = useState<ImportedModel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rendererError, setRendererError] = useState<string | null>(null);
@@ -58,12 +58,17 @@ function App() {
   const [calibrationNonce, setCalibrationNonce] = useState(0);
   const [overlayMode, setOverlayMode] = useState(false);
   const [hotkeyRequest, setHotkeyRequest] = useState<{ nonce: number; hotkey: ImportedHotkey } | null>(null);
+  const [pluginRequests, setPluginRequests] = useState<PluginAuthorizationRequest[]>([]);
+  const [parameterInjection, setParameterInjection] = useState<{ nonce: number; value: VtsParameterInjection } | null>(null);
 
   useEffect(() => {
     const offFrame = window.lumastage.onTrackingFrame(setFrame);
     const offStatus = window.lumastage.onDesktopStatus(setStatus);
+    const offPluginRequest = window.lumastage.onPluginAuthorizationRequest((request) => setPluginRequests((items) => [...items, request]));
+    const offVtsHotkey = window.lumastage.onVtsHotkeyTrigger((hotkey) => setHotkeyRequest({ nonce: Date.now(), hotkey }));
+    const offParameterInjection = window.lumastage.onVtsParameterInjection((value) => setParameterInjection({ nonce: Date.now(), value }));
     void window.lumastage.getCubismCoreStatus().then(setCoreStatus);
-    return () => { offFrame(); offStatus(); };
+    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); };
   }, []);
 
   useEffect(() => {
@@ -97,6 +102,12 @@ function App() {
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
   const triggerHotkey = (hotkey: ImportedHotkey) => setHotkeyRequest({ nonce: Date.now(), hotkey });
+  const resolvePluginRequest = async (approved: boolean) => {
+    const request = pluginRequests[0];
+    if (!request) return;
+    await window.lumastage.resolvePluginAuthorization(request.id, approved);
+    setPluginRequests((items) => items.slice(1));
+  };
 
   return <main className={`shell${overlayMode ? " overlay" : ""}`}>
     <aside className="rail">
@@ -110,7 +121,7 @@ function App() {
       <div className="stage-grid">
         <section className="stage-card">
           <div className="stage-toolbar"><span>{model?.name ?? "Preview avatar"}</span><div><button>⌖ Fit</button><button onClick={() => void toggleOverlay()}>{overlayMode ? "Exit overlay" : "▣ Transparent"}</button></div></div>
-          <div className="stage"><div className="grid" />{!rendererReady && <AvatarPreview frame={frame} />}<Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} onReady={setRendererReady} onError={setRendererError} /><div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div>{overlayMode && <button className="exit-overlay" onClick={() => void toggleOverlay(false)}>Exit overlay · Esc</button>}</div>
+          <div className="stage"><div className="grid" />{!rendererReady && <AvatarPreview frame={frame} />}<Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} parameterInjection={parameterInjection} onReady={setRendererReady} onError={setRendererError} /><div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div>{overlayMode && <button className="exit-overlay" onClick={() => void toggleOverlay(false)}>Exit overlay · Esc</button>}</div>
         </section>
 
         <aside className="inspector">
@@ -118,9 +129,11 @@ function App() {
           <section className="panel"><div className="panel-heading"><h3>Live signals</h3><span>{frame.sequence ? `#${frame.sequence}` : "idle"}</span></div><Meter label="Mouth" value={frame.blendShapes.jawOpen ?? 0} /><Meter label="Blink L" value={frame.blendShapes.eyeBlinkLeft ?? 0} /><Meter label="Blink R" value={frame.blendShapes.eyeBlinkRight ?? 0} /><Meter label="Smile" value={((frame.blendShapes.mouthSmileLeft ?? 0) + (frame.blendShapes.mouthSmileRight ?? 0)) / 2} /><button className="secondary" disabled={!frame.faceFound} onClick={() => setCalibrationNonce((value) => value + 1)}>◎ Calibrate neutral pose</button></section>
           {model?.vTubeHotkeys.length ? <section className="panel"><div className="panel-heading"><h3>Model hotkeys</h3><span>{model.vTubeHotkeys.length}</span></div><div className="hotkeys">{model.vTubeHotkeys.map((hotkey, index) => <button key={hotkey.id || `${hotkey.name}-${index}`} onClick={() => triggerHotkey(hotkey)}><span>{hotkey.name || hotkey.action}</span><small>{hotkey.action}</small></button>)}</div></section> : null}
           <section className="panel hint"><div>⌁</div><p><b>Connect Tracker</b><br />Enter pairing code <strong>{status.pairingCode}</strong> on the iPhone. Only paired devices can stream.{status.trustedDevices > 0 && <button className="trust-reset" onClick={() => void window.lumastage.forgetTrustedDevices()}>Forget {status.trustedDevices} paired device{status.trustedDevices === 1 ? "" : "s"}</button>}</p></section>
+          <section className="panel hint"><div>◫</div><p><b>Plugin API</b><br /><code>127.0.0.1:{status.vtsApiPort}</code> · {status.vtsApiActive ? "active" : "unavailable"}{status.allowedPlugins > 0 && <button className="trust-reset" onClick={() => void window.lumastage.forgetPluginAccess()}>Revoke {status.allowedPlugins} plugin permission{status.allowedPlugins === 1 ? "" : "s"}</button>}</p></section>
         </aside>
       </div>
     </section>
+    {pluginRequests[0] && <div className="modal-backdrop"><section className="plugin-modal"><div className="plugin-mark">◫</div><small>PLUGIN API REQUEST</small><h2>Allow “{pluginRequests[0].pluginName}”?</h2><p>Developer: {pluginRequests[0].pluginDeveloper}</p><p className="modal-note">This local plugin will be able to read model/tracking state and trigger supported model hotkeys. You can revoke access later.</p><div><button className="secondary" onClick={() => void resolvePluginRequest(false)}>Deny</button><button className="primary" onClick={() => void resolvePluginRequest(true)}>Allow plugin</button></div></section></div>}
   </main>;
 }
 

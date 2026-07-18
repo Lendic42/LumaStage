@@ -41,19 +41,40 @@ export interface CubismCoreStatus {
   version?: string;
 }
 
+export interface PluginAuthorizationRequest {
+  id: string;
+  pluginName: string;
+  pluginDeveloper: string;
+  pluginIcon?: string;
+}
+
+export interface VtsParameterInjection {
+  parameters: Array<{ id: string; value: number; weight?: number }>;
+  mode: "set" | "add";
+  faceFound?: boolean;
+}
+
 export interface DesktopStatus {
   port: number;
   connectedDevices: number;
   pairingCode: string;
   trustedDevices: number;
+  vtsApiPort: number;
+  vtsApiActive: boolean;
+  allowedPlugins: number;
 }
 
 export interface LumaStageBridge {
   onTrackingFrame(listener: (frame: TrackingFrame) => void): () => void;
   onDesktopStatus(listener: (status: DesktopStatus) => void): () => void;
+  onPluginAuthorizationRequest(listener: (request: PluginAuthorizationRequest) => void): () => void;
+  onVtsHotkeyTrigger(listener: (hotkey: ImportedHotkey) => void): () => void;
+  onVtsParameterInjection(listener: (injection: VtsParameterInjection) => void): () => void;
   importModel(): Promise<ImportedModel | null>;
   getCubismCoreStatus(): Promise<CubismCoreStatus>;
   installCubismCore(): Promise<CubismCoreStatus | null>;
   setOverlayMode(enabled: boolean): Promise<boolean>;
   forgetTrustedDevices(): Promise<boolean>;
+  resolvePluginAuthorization(id: string, approved: boolean): Promise<boolean>;
+  forgetPluginAccess(): Promise<boolean>;
 }

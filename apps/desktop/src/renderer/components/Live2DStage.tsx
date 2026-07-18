@@ -3,13 +3,14 @@ import { Application } from "pixi.js";
 import type { Live2DModel as Live2DModelType, Cubism4InternalModel } from "pixi-live2d-display/cubism4";
 import { TrackingEngine } from "@lumastage/tracking-core";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { ImportedHotkey, ImportedModel } from "../../shared/bridge";
+import type { ImportedHotkey, ImportedModel, VtsParameterInjection } from "../../shared/bridge";
 
 interface Props {
   model: ImportedModel | null;
   frame: TrackingFrame;
   calibrationNonce: number;
   hotkeyRequest: { nonce: number; hotkey: ImportedHotkey } | null;
+  parameterInjection: { nonce: number; value: VtsParameterInjection } | null;
   onReady(ready: boolean): void;
   onError(message: string | null): void;
 }
@@ -37,7 +38,7 @@ function loadCubismCore(): Promise<void> {
   return loading;
 }
 
-export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, onReady, onError }: Props) {
+export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, onReady, onError }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef(new TrackingEngine());
@@ -65,6 +66,11 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
       onError(reason instanceof Error ? reason.message : String(reason));
     });
   }, [hotkeyRequest, onError]);
+
+  useEffect(() => {
+    if (!parameterInjection) return;
+    engineRef.current.injectVTubeParameters(parameterInjection.value.parameters, parameterInjection.value.mode);
+  }, [parameterInjection]);
 
   useEffect(() => {
     if (!imported || !canvasRef.current || !containerRef.current) {

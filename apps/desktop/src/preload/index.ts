@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { CubismCoreStatus, DesktopStatus, ImportedModel, LumaStageBridge } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, VtsParameterInjection } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -13,11 +13,28 @@ const bridge: LumaStageBridge = {
     ipcRenderer.on("desktop-status", handler);
     return () => ipcRenderer.removeListener("desktop-status", handler);
   },
+  onPluginAuthorizationRequest(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, request: PluginAuthorizationRequest) => listener(request);
+    ipcRenderer.on("plugin-authorization-request", handler);
+    return () => ipcRenderer.removeListener("plugin-authorization-request", handler);
+  },
+  onVtsHotkeyTrigger(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, hotkey: ImportedHotkey) => listener(hotkey);
+    ipcRenderer.on("vts-hotkey-trigger", handler);
+    return () => ipcRenderer.removeListener("vts-hotkey-trigger", handler);
+  },
+  onVtsParameterInjection(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, injection: VtsParameterInjection) => listener(injection);
+    ipcRenderer.on("vts-parameter-injection", handler);
+    return () => ipcRenderer.removeListener("vts-parameter-injection", handler);
+  },
   importModel: () => ipcRenderer.invoke("import-model") as Promise<ImportedModel | null>,
   getCubismCoreStatus: () => ipcRenderer.invoke("cubism-core-status") as Promise<CubismCoreStatus>,
   installCubismCore: () => ipcRenderer.invoke("install-cubism-core") as Promise<CubismCoreStatus | null>,
   setOverlayMode: (enabled) => ipcRenderer.invoke("set-overlay-mode", enabled) as Promise<boolean>,
-  forgetTrustedDevices: () => ipcRenderer.invoke("forget-trusted-devices") as Promise<boolean>
+  forgetTrustedDevices: () => ipcRenderer.invoke("forget-trusted-devices") as Promise<boolean>,
+  resolvePluginAuthorization: (id, approved) => ipcRenderer.invoke("resolve-plugin-authorization", id, approved) as Promise<boolean>,
+  forgetPluginAccess: () => ipcRenderer.invoke("forget-plugin-access") as Promise<boolean>
 };
 
 contextBridge.exposeInMainWorld("lumastage", bridge);

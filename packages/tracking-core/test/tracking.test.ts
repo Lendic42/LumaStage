@@ -85,4 +85,24 @@ describe("ARKit to Live2D mapping", () => {
     const restarted = engine.ingest(frame({ sequence: 1, blendShapes: { jawOpen: 0.25 } }), 101);
     expect(restarted.ParamMouthOpenY).toBe(0.25);
   });
+
+  it("injects VTube Studio input values through imported model mappings", () => {
+    const engine = new TrackingEngine({ smoothingMs: 0, lostTrackingSmoothingMs: 0 });
+    engine.setVTubeParameterMappings([{
+      input: "MouthOpen", inputRangeLower: 0, inputRangeUpper: 1,
+      outputRangeLower: 0, outputRangeUpper: 1, clampInput: true, clampOutput: true,
+      outputLive2D: "CustomMouth", smoothing: 0
+    }]);
+    engine.ingest(frame({ blendShapes: { jawOpen: 0.2 } }), 100);
+    engine.injectVTubeParameters([{ id: "MouthOpen", value: 0.8 }], "set", 101);
+    expect(engine.tick(101).CustomMouth).toBeCloseTo(0.8);
+    expect(engine.tick(1102).CustomMouth).toBe(0);
+  });
+
+  it("injects standard VTube input aliases into Cubism parameters", () => {
+    const engine = new TrackingEngine({ smoothingMs: 0 });
+    engine.ingest(frame(), 100);
+    engine.injectVTubeParameters([{ id: "FaceAngleX", value: 20, weight: 0.5 }], "set", 101);
+    expect(engine.tick(101).ParamAngleX).toBeCloseTo(10);
+  });
 });

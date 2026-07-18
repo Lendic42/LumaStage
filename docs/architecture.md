@@ -14,6 +14,8 @@ No video frames leave the iPhone. A frame contains head pose, gaze and numeric e
 
 Electron provides one Windows/macOS UI and a Chromium WebGL surface. The main process owns local discovery, WebSocket sessions, model filesystem access and future virtual-camera/NDI integrations. The sandboxed renderer receives validated frames through a narrow preload bridge.
 
+The VTube Studio-compatible plugin API is a second WebSocket server bound only to `127.0.0.1:8001`. Its request/response core is isolated in `packages/vts-api` and tested independently. Authentication tokens are shown only once to an approved plugin; LumaStage persists SHA-256 hashes, requires a visible per-plugin approval and can revoke all plugin sessions from the UI.
+
 The renderer boundary is an adapter rather than a direct dependency on one model engine:
 
 - `CubismRenderer`: existing `.moc3`/`.model3.json` models through an installed Cubism Core.

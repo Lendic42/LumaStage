@@ -4,7 +4,7 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ["@lumastage/model-compat", "@lumastage/protocol"] })]
+    plugins: [externalizeDepsPlugin({ exclude: ["@lumastage/model-compat", "@lumastage/protocol", "@lumastage/tracking-core", "@lumastage/vts-api"] })]
   },
   preload: {
     plugins: [externalizeDepsPlugin({ exclude: ["@lumastage/protocol"] })],

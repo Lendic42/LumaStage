@@ -1,13 +1,15 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { copyFile, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { basename, isAbsolute, relative, resolve, sep, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import Bonjour from "bonjour-service";
 import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
 import { inspectCubismModelFolder } from "@lumastage/model-compat";
-import type { CubismCoreStatus, DesktopStatus, ImportedModel } from "../shared/bridge.js";
+import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
+import { handleVtsApiRequest, type VtsApiHost, type VtsApiSession, type VtsCurrentModel, type VtsParameter } from "@lumastage/vts-api";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, VtsParameterInjection } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -15,6 +17,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const TRACKING_PORT = 39510;
+const VTS_API_PORT = 8001;
 const pairingCode = String(randomInt(0, 1_000_000)).padStart(6, "0");
 interface ClientSession {
   hello: HelloMessage;
@@ -25,10 +28,99 @@ let service: ReturnType<Bonjour["publish"]> | undefined;
 let server: WebSocketServer | undefined;
 let bonjour: Bonjour | undefined;
 let activeModelRoot: string | undefined;
+let activeApiModel: VtsCurrentModel | undefined;
+let activeImportedModel: ImportedModel | undefined;
+let latestTrackingFrame: TrackingFrame | undefined;
+let injectedFaceFound: { value: boolean; expiresAt: number } | undefined;
+const injectedInputs = new Map<string, { value: number; weight: number; mode: "set" | "add"; expiresAt: number }>();
 const trustedDevices = new Map<string, string>();
+const pluginTokens = new Map<string, string>();
+const pluginSessions = new Map<WebSocket, VtsApiSession>();
+const pendingPluginApprovals = new Map<string, { resolve(approved: boolean): void; timeout: NodeJS.Timeout }>();
+let vtsApiServer: WebSocketServer | undefined;
+let vtsApiActive = false;
 
 function trustedDevicesPath(): string {
   return join(app.getPath("userData"), "trusted-devices.json");
+}
+
+function pluginAccessPath(): string {
+  return join(app.getPath("userData"), "plugin-api-access.json");
+}
+
+function pluginKey(name: string, developer: string): string {
+  return `${name}\u0000${developer}`;
+}
+
+const defaultVtsParameterDefinitions: Array<Omit<VtsParameter, "value" | "addedBy">> = [
+  { name: "FaceAngleX", min: -30, max: 30, defaultValue: 0 },
+  { name: "FaceAngleY", min: -30, max: 30, defaultValue: 0 },
+  { name: "FaceAngleZ", min: -30, max: 30, defaultValue: 0 },
+  { name: "FacePositionX", min: -10, max: 10, defaultValue: 0 },
+  { name: "FacePositionY", min: -10, max: 10, defaultValue: 0 },
+  { name: "FacePositionZ", min: -10, max: 10, defaultValue: 0 },
+  { name: "EyeOpenLeft", min: 0, max: 1.5, defaultValue: 1 },
+  { name: "EyeOpenRight", min: 0, max: 1.5, defaultValue: 1 },
+  { name: "EyeLeftX", min: -1, max: 1, defaultValue: 0 },
+  { name: "EyeLeftY", min: -1, max: 1, defaultValue: 0 },
+  { name: "EyeRightX", min: -1, max: 1, defaultValue: 0 },
+  { name: "EyeRightY", min: -1, max: 1, defaultValue: 0 },
+  { name: "MouthOpen", min: 0, max: 1, defaultValue: 0 },
+  { name: "MouthSmile", min: 0, max: 1, defaultValue: 0 },
+  { name: "VoiceVolumePlusMouthOpen", min: 0, max: 1, defaultValue: 0 },
+  { name: "BrowLeftY", min: -1, max: 1, defaultValue: 0 },
+  { name: "BrowRightY", min: -1, max: 1, defaultValue: 0 },
+  { name: "Brows", min: -1, max: 1, defaultValue: 0 },
+  { name: "CheekPuff", min: 0, max: 1, defaultValue: 0 },
+  { name: "FaceAngry", min: 0, max: 1, defaultValue: 0 },
+  { name: "MouthX", min: -1, max: 1, defaultValue: 0 },
+  { name: "TongueOut", min: 0, max: 1, defaultValue: 0 }
+];
+
+function currentVtsInputs(now = Date.now()): Record<string, number> {
+  const defaults = Object.fromEntries(defaultVtsParameterDefinitions.map((parameter) => [parameter.name, parameter.defaultValue]));
+  const values = latestTrackingFrame ? { ...defaults, ...mapARKitToVTubeInputs(latestTrackingFrame) } : defaults;
+  for (const [id, injected] of injectedInputs) {
+    if (injected.expiresAt < now) {
+      injectedInputs.delete(id);
+      continue;
+    }
+    const base = values[id] ?? 0;
+    values[id] = injected.mode === "add" ? base + injected.value * injected.weight : base * (1 - injected.weight) + injected.value * injected.weight;
+  }
+  return values;
+}
+
+function inputParameterLists(): { defaultParameters: VtsParameter[]; customParameters: VtsParameter[] } {
+  const values = currentVtsInputs();
+  const defaultNames = new Set(defaultVtsParameterDefinitions.map((parameter) => parameter.name));
+  const defaultParameters = defaultVtsParameterDefinitions.map((parameter) => ({ ...parameter, addedBy: "VTube Studio", value: values[parameter.name] }));
+  const customNames = new Set((activeImportedModel?.vTubeParameterMappings ?? []).map((mapping) => mapping.input).filter((name) => !defaultNames.has(name)));
+  const customParameters = [...customNames].map((name) => ({ name, addedBy: "LumaStage model mapping", value: values[name] ?? 0, min: -1_000_000, max: 1_000_000, defaultValue: 0 }));
+  return { defaultParameters, customParameters };
+}
+
+function live2DParameterList(): VtsParameter[] {
+  const inputs = currentVtsInputs();
+  const mappings = activeImportedModel?.vTubeParameterMappings ?? [];
+  if (mappings.length > 0) {
+    const values = applyVTubeParameterMappingsToInputs(inputs, mappings);
+    return mappings.map((mapping) => ({
+      name: mapping.outputLive2D,
+      value: values[mapping.outputLive2D] ?? 0,
+      min: Math.min(mapping.outputRangeLower, mapping.outputRangeUpper),
+      max: Math.max(mapping.outputRangeLower, mapping.outputRangeUpper),
+      defaultValue: 0
+    }));
+  }
+  const aliases: Array<[string, string, number, number, number]> = [
+    ["FaceAngleX", "ParamAngleX", -30, 30, 0], ["FaceAngleY", "ParamAngleY", -30, 30, 0], ["FaceAngleZ", "ParamAngleZ", -30, 30, 0],
+    ["EyeOpenLeft", "ParamEyeLOpen", 0, 1.5, 1], ["EyeOpenRight", "ParamEyeROpen", 0, 1.5, 1],
+    ["EyeLeftX", "ParamEyeBallX", -1, 1, 0], ["EyeLeftY", "ParamEyeBallY", -1, 1, 0],
+    ["MouthOpen", "ParamMouthOpenY", 0, 1, 0], ["MouthSmile", "ParamMouthForm", -1, 1, 0],
+    ["BrowLeftY", "ParamBrowLY", -1, 1, 0], ["BrowRightY", "ParamBrowRY", -1, 1, 0]
+  ];
+  return aliases.map(([input, name, min, max, defaultValue]) => ({ name, value: inputs[input], min, max, defaultValue }));
 }
 
 function hashToken(token: string): string {
@@ -62,6 +154,45 @@ async function trustDevice(deviceId: string): Promise<string> {
 async function saveTrustedDevices(): Promise<void> {
   await mkdir(app.getPath("userData"), { recursive: true });
   await writeFile(trustedDevicesPath(), `${JSON.stringify(Object.fromEntries(trustedDevices), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+async function loadPluginAccess(): Promise<void> {
+  try {
+    const parsed = JSON.parse(await readFile(pluginAccessPath(), "utf8")) as Record<string, unknown>;
+    for (const [key, tokenHash] of Object.entries(parsed)) {
+      if (typeof tokenHash === "string" && /^[a-f0-9]{64}$/i.test(tokenHash)) pluginTokens.set(key, tokenHash);
+    }
+  } catch {
+    // First launch or invalid local plugin access file.
+  }
+}
+
+async function savePluginAccess(): Promise<void> {
+  await mkdir(app.getPath("userData"), { recursive: true });
+  await writeFile(pluginAccessPath(), `${JSON.stringify(Object.fromEntries(pluginTokens), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+function requestPluginApproval(pluginName: string, pluginDeveloper: string, pluginIcon?: string): Promise<boolean> {
+  const id = randomUUID();
+  const safeIcon = pluginIcon && pluginIcon.length <= 350_000 ? pluginIcon : undefined;
+  const prompt: PluginAuthorizationRequest = { id, pluginName, pluginDeveloper, pluginIcon: safeIcon };
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingPluginApprovals.delete(id);
+      resolve(false);
+    }, 60_000);
+    pendingPluginApprovals.set(id, { resolve, timeout });
+    broadcast("plugin-authorization-request", prompt);
+  });
+}
+
+async function issuePluginToken(pluginName: string, pluginDeveloper: string, pluginIcon?: string): Promise<string | undefined> {
+  if (!await requestPluginApproval(pluginName, pluginDeveloper, pluginIcon)) return undefined;
+  const token = randomBytes(32).toString("hex");
+  pluginTokens.set(pluginKey(pluginName, pluginDeveloper), hashToken(token));
+  await savePluginAccess();
+  publishStatus();
+  return token;
 }
 
 async function authorizeHello(hello: HelloMessage): Promise<{ deviceToken?: string } | undefined> {
@@ -135,7 +266,15 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 function publishStatus(): void {
-  const status: DesktopStatus = { port: TRACKING_PORT, connectedDevices: clients.size, pairingCode, trustedDevices: trustedDevices.size };
+  const status: DesktopStatus = {
+    port: TRACKING_PORT,
+    connectedDevices: clients.size,
+    pairingCode,
+    trustedDevices: trustedDevices.size,
+    vtsApiPort: VTS_API_PORT,
+    vtsApiActive,
+    allowedPlugins: pluginTokens.size
+  };
   broadcast("desktop-status", status);
 }
 
@@ -143,6 +282,7 @@ function acceptFrame(socket: WebSocket, frame: TrackingFrame): void {
   const client = clients.get(socket);
   if (!client || frame.sequence <= client.lastSequence) return;
   client.lastSequence = frame.sequence;
+  latestTrackingFrame = frame;
   broadcast("tracking-frame", frame);
 }
 
@@ -186,10 +326,85 @@ function startTrackingServer(): void {
   });
 }
 
+function startVtsApiServer(): void {
+  const host: VtsApiHost = {
+    version: app.getVersion(),
+    startedAt: Date.now(),
+    allowedPluginCount: () => pluginTokens.size,
+    connectedPluginCount: () => [...pluginSessions.values()].filter((session) => session.authenticated).length,
+    requestToken: issuePluginToken,
+    authenticate: async (pluginName, pluginDeveloper, token) => {
+      const storedHash = pluginTokens.get(pluginKey(pluginName, pluginDeveloper));
+      return Boolean(storedHash && hashesMatch(hashToken(token), storedHash));
+    },
+    currentModel: () => activeApiModel,
+    faceFound: () => injectedFaceFound && injectedFaceFound.expiresAt >= Date.now() ? injectedFaceFound.value : latestTrackingFrame?.faceFound ?? false,
+    triggerHotkey: async (hotkeyIDOrName) => {
+      const hotkey = activeApiModel?.hotkeys.find((candidate) =>
+        candidate.hotkeyID === hotkeyIDOrName || candidate.name.toLowerCase() === hotkeyIDOrName.toLowerCase()
+      );
+      if (!hotkey) return undefined;
+      const trigger: ImportedHotkey = { id: hotkey.hotkeyID, name: hotkey.name, action: hotkey.type, file: hotkey.file, folder: "" };
+      broadcast("vts-hotkey-trigger", trigger);
+      return hotkey.hotkeyID;
+    },
+    inputParameters: inputParameterLists,
+    live2DParameters: live2DParameterList,
+    injectParameterData: async (parameters, mode, faceFound) => {
+      const known = new Set([
+        ...defaultVtsParameterDefinitions.map((parameter) => parameter.name),
+        ...(activeImportedModel?.vTubeParameterMappings ?? []).map((mapping) => mapping.input)
+      ]);
+      const missing = parameters.filter((parameter) => !known.has(parameter.id)).map((parameter) => parameter.id);
+      if (missing.length > 0) return missing;
+      const now = Date.now();
+      for (const parameter of parameters) {
+        injectedInputs.set(parameter.id, { value: parameter.value, weight: parameter.weight ?? 1, mode, expiresAt: now + 1000 });
+      }
+      if (faceFound !== undefined) injectedFaceFound = { value: faceFound, expiresAt: now + 1000 };
+      const injection: VtsParameterInjection = { parameters, mode, faceFound };
+      broadcast("vts-parameter-injection", injection);
+      return [];
+    }
+  };
+
+  vtsApiServer = new WebSocketServer({ host: "127.0.0.1", port: VTS_API_PORT, maxPayload: 1024 * 1024 });
+  vtsApiServer.on("listening", () => {
+    vtsApiActive = true;
+    publishStatus();
+  });
+  vtsApiServer.on("error", () => {
+    vtsApiActive = false;
+    publishStatus();
+  });
+  vtsApiServer.on("connection", (socket) => {
+    const apiSession: VtsApiSession = { authenticated: false };
+    pluginSessions.set(socket, apiSession);
+    socket.on("message", async (raw) => {
+      try {
+        const result = await handleVtsApiRequest(raw.toString("utf8"), apiSession, host);
+        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(result));
+        publishStatus();
+      } catch (reason) {
+        if (socket.readyState === socket.OPEN) {
+          socket.send(JSON.stringify({
+            apiName: "VTubeStudioPublicAPI", apiVersion: "1.0", timestamp: Date.now(), requestID: randomUUID(),
+            messageType: "APIError", data: { errorID: 0, message: reason instanceof Error ? reason.message : "Internal server error" }
+          }));
+        }
+      }
+    });
+    socket.on("close", () => {
+      pluginSessions.delete(socket);
+      publishStatus();
+    });
+  });
+}
+
 async function inspectModelDirectory(directory: string): Promise<ImportedModel> {
   const model = await inspectCubismModelFolder(directory);
   activeModelRoot = model.directory;
-  return {
+  const imported: ImportedModel = {
     directory: model.directory,
     manifestPath: model.manifestPath,
     name: model.name,
@@ -205,6 +420,28 @@ async function inspectModelDirectory(directory: string): Promise<ImportedModel> 
     vTubeParameterMappings: model.vTubeStudio?.parameterMappings ?? [],
     vTubeHotkeys: model.vTubeStudio?.hotkeys ?? []
   };
+  activeApiModel = {
+    modelName: model.vTubeStudio?.name ?? model.name,
+    modelID: model.vTubeStudio?.modelId ?? model.name,
+    vtsModelName: model.vTubeStudio ? basename(model.vTubeStudio.path) : "",
+    vtsModelIconName: model.vTubeStudio?.iconPath ? basename(model.vTubeStudio.iconPath) : "",
+    live2DModelName: basename(model.manifestPath),
+    loadedAt: Date.now(),
+    numberOfLive2DParameters: Math.max(model.vTubeStudio?.parameterMappings.length ?? 0, model.eyeBlinkParameters.length + model.lipSyncParameters.length),
+    numberOfLive2DArtmeshes: 0,
+    hasPhysicsFile: Boolean(model.physicsPath),
+    numberOfTextures: model.texturePaths.length,
+    textureResolution: 0,
+    hotkeys: imported.vTubeHotkeys.map((hotkey) => ({
+      name: hotkey.name,
+      type: hotkey.action,
+      description: hotkey.action,
+      file: hotkey.file,
+      hotkeyID: hotkey.id
+    }))
+  };
+  activeImportedModel = imported;
+  return imported;
 }
 
 function createWindow(): void {
@@ -281,8 +518,30 @@ app.whenReady().then(async () => {
     publishStatus();
     return true;
   });
-  await loadTrustedDevices();
+  ipcMain.handle("resolve-plugin-authorization", (_event, id: unknown, approved: unknown) => {
+    if (typeof id !== "string" || typeof approved !== "boolean") throw new Error("Invalid plugin authorization response");
+    const pending = pendingPluginApprovals.get(id);
+    if (!pending) return false;
+    clearTimeout(pending.timeout);
+    pendingPluginApprovals.delete(id);
+    pending.resolve(approved);
+    return true;
+  });
+  ipcMain.handle("forget-plugin-access", async () => {
+    pluginTokens.clear();
+    for (const [socket, apiSession] of pluginSessions) {
+      if (apiSession.authenticated) {
+        apiSession.authenticated = false;
+        socket.close(1008, "Plugin access was revoked");
+      }
+    }
+    await savePluginAccess();
+    publishStatus();
+    return true;
+  });
+  await Promise.all([loadTrustedDevices(), loadPluginAccess()]);
   startTrackingServer();
+  startVtsApiServer();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -297,4 +556,10 @@ app.on("before-quit", () => {
   service?.stop();
   bonjour?.destroy();
   server?.close();
+  vtsApiServer?.close();
+  for (const pending of pendingPluginApprovals.values()) {
+    clearTimeout(pending.timeout);
+    pending.resolve(false);
+  }
+  pendingPluginApprovals.clear();
 });

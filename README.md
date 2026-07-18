@@ -21,6 +21,7 @@ The project is under active development. The current milestone includes the comp
 apps/desktop       Electron + React desktop application
 apps/ios           Native SwiftUI + ARKit tracker
 packages/protocol  Versioned tracking protocol and validation
+packages/vts-api   Tested VTube Studio Plugin API compatibility core
 docs               Architecture and compatibility notes
 ```
 
@@ -47,6 +48,17 @@ After that, import a folder containing one `*.model3.json`. LumaStage serves mod
 The importer rejects absolute/path-traversal asset references and reports missing files before rendering.
 
 The stage toolbar includes a transparent always-on-top overlay for OBS/window capture. Imported VTube Studio expression and motion hotkeys are shown in the inspector; actions that cannot be mapped safely are reported instead of guessed.
+
+## VTube Studio Plugin API compatibility
+
+LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`. Plugins must request access through the normal VTube Studio authentication messages; LumaStage shows a per-plugin approval dialog, stores only a token hash and provides a revoke button. The current tested subset includes:
+
+- `APIStateRequest`, `AuthenticationTokenRequest` and `AuthenticationRequest`;
+- `StatisticsRequest`, `CurrentModelRequest` and `FaceFoundRequest`;
+- `HotkeysInCurrentModelRequest` and `HotkeyTriggerRequest` for imported expression/motion hotkeys.
+- `InputParameterListRequest`, `ParameterValueRequest`, `Live2DParameterListRequest` and one-second `InjectParameterDataRequest` overrides with `set`/`add` modes and weights.
+
+Unsupported request types return the official `APIError` shape instead of silently succeeding. See the compatibility matrix for the remaining API surface.
 
 ## Build distributable desktop apps
 

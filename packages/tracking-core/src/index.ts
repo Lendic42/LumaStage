@@ -20,6 +20,12 @@ export interface VTubeParameterMapping {
   smoothing: number;
 }
 
+export interface InjectedVTubeParameter {
+  id: string;
+  value: number;
+  weight?: number;
+}
+
 interface HeadNeutral {
   pitch: number;
   yaw: number;
@@ -111,7 +117,10 @@ export function mapARKitToVTubeInputs(frame: TrackingFrame, neutral?: HeadNeutra
 }
 
 export function applyVTubeParameterMappings(frame: TrackingFrame, mappings: VTubeParameterMapping[], neutral?: HeadNeutral): ParameterValues {
-  const inputs = mapARKitToVTubeInputs(frame, neutral);
+  return applyVTubeParameterMappingsToInputs(mapARKitToVTubeInputs(frame, neutral), mappings);
+}
+
+export function applyVTubeParameterMappingsToInputs(inputs: ParameterValues, mappings: VTubeParameterMapping[]): ParameterValues {
   const output: ParameterValues = {};
   for (const mapping of mappings) {
     const input = inputs[mapping.input];
@@ -153,6 +162,7 @@ export class TrackingEngine {
   private lastTickAt = 0;
   private vTubeMappings: VTubeParameterMapping[] = [];
   private parameterSmoothing = new Map<string, number>();
+  private vTubeOverrides = new Map<string, { value: number; weight: number; mode: "set" | "add"; expiresAt: number }>();
 
   constructor(options: TrackingEngineOptions = {}) {
     this.smoothingMs = options.smoothingMs ?? 55;
@@ -163,7 +173,7 @@ export class TrackingEngine {
   ingest(frame: TrackingFrame, receivedAt = Date.now()): ParameterValues {
     this.lastFrame = frame;
     this.lastReceivedAt = receivedAt;
-    this.target = frame.faceFound ? this.mapFrame(frame) : this.neutralTarget();
+    this.target = frame.faceFound ? this.mapFrame(frame, receivedAt) : this.neutralTarget();
     if (this.lastTickAt === 0) this.lastTickAt = receivedAt;
     return this.tick(receivedAt);
   }
@@ -175,7 +185,7 @@ export class TrackingEngine {
       yaw: this.lastFrame.head.yaw,
       roll: this.lastFrame.head.roll
     };
-    this.target = this.mapFrame(this.lastFrame);
+    this.target = this.mapFrame(this.lastFrame, Date.now());
     return true;
   }
 
@@ -183,12 +193,29 @@ export class TrackingEngine {
     this.vTubeMappings = mappings.map((mapping) => ({ ...mapping }));
     this.parameterSmoothing = new Map(mappings.map((mapping) => [mapping.outputLive2D, Math.max(0, mapping.smoothing)]));
     this.current = this.neutralTarget();
-    this.target = this.lastFrame?.faceFound ? this.mapFrame(this.lastFrame) : this.neutralTarget();
+    this.target = this.lastFrame?.faceFound ? this.mapFrame(this.lastFrame, Date.now()) : this.neutralTarget();
+  }
+
+  injectVTubeParameters(parameters: InjectedVTubeParameter[], mode: "set" | "add" = "set", now = Date.now()): void {
+    for (const parameter of parameters) {
+      this.vTubeOverrides.set(parameter.id, {
+        value: parameter.value,
+        weight: clamp(parameter.weight ?? 1, 0, 1),
+        mode,
+        expiresAt: now + 1000
+      });
+    }
   }
 
   tick(now = Date.now()): ParameterValues {
-    const isFresh = Boolean(this.lastFrame?.faceFound) && now - this.lastReceivedAt <= this.staleAfterMs;
-    if (!isFresh) this.target = this.neutralTarget();
+    const faceIsFresh = Boolean(this.lastFrame?.faceFound) && now - this.lastReceivedAt <= this.staleAfterMs;
+    for (const [id, override] of this.vTubeOverrides) {
+      if (override.expiresAt < now) this.vTubeOverrides.delete(id);
+    }
+    const hasOverrides = [...this.vTubeOverrides.values()].some((override) => override.expiresAt >= now);
+    const isFresh = faceIsFresh || hasOverrides;
+    if (isFresh) this.target = this.mapFrame(this.lastFrame ?? emptyTrackingFrame, now);
+    else this.target = this.neutralTarget();
     const delta = clamp(now - this.lastTickAt, 0, 100);
     this.lastTickAt = now;
     for (const [id, target] of Object.entries(this.target)) {
@@ -204,10 +231,32 @@ export class TrackingEngine {
     return { ...this.current };
   }
 
-  private mapFrame(frame: TrackingFrame): ParameterValues {
-    return this.vTubeMappings.length > 0
-      ? applyVTubeParameterMappings(frame, this.vTubeMappings, this.headNeutral)
-      : mapARKitToStandardParameters(frame, this.headNeutral);
+  private mapFrame(frame: TrackingFrame, now: number): ParameterValues {
+    const inputs = mapARKitToVTubeInputs(frame, this.headNeutral);
+    const direct: ParameterValues = {};
+    for (const [id, override] of this.vTubeOverrides) {
+      if (override.expiresAt < now) {
+        this.vTubeOverrides.delete(id);
+        continue;
+      }
+      const base = inputs[id] ?? 0;
+      const mixed = override.mode === "add"
+        ? base + override.value * override.weight
+        : base * (1 - override.weight) + override.value * override.weight;
+      inputs[id] = mixed;
+      if (id.startsWith("Param")) direct[id] = mixed;
+    }
+    if (this.vTubeMappings.length > 0) return { ...applyVTubeParameterMappingsToInputs(inputs, this.vTubeMappings), ...direct };
+    const standard = mapARKitToStandardParameters(frame, this.headNeutral);
+    const aliases: Record<string, string> = {
+      FaceAngleX: "ParamAngleX", FaceAngleY: "ParamAngleY", FaceAngleZ: "ParamAngleZ",
+      EyeOpenLeft: "ParamEyeLOpen", EyeOpenRight: "ParamEyeROpen", EyeLeftX: "ParamEyeBallX", EyeLeftY: "ParamEyeBallY",
+      MouthOpen: "ParamMouthOpenY", MouthSmile: "ParamMouthForm", BrowLeftY: "ParamBrowLY", BrowRightY: "ParamBrowRY"
+    };
+    for (const [input, parameter] of Object.entries(aliases)) {
+      if (this.vTubeOverrides.has(input)) standard[parameter] = inputs[input];
+    }
+    return { ...standard, ...direct };
   }
 
   private neutralTarget(): ParameterValues {
@@ -222,3 +271,14 @@ export class TrackingEngine {
     return values;
   }
 }
+
+const emptyTrackingFrame: TrackingFrame = {
+  type: "tracking",
+  protocol: 1,
+  sequence: 0,
+  capturedAt: 0,
+  faceFound: false,
+  head: { pitch: 0, yaw: 0, roll: 0, positionX: 0, positionY: 0, positionZ: 0 },
+  gaze: { x: 0, y: 0 },
+  blendShapes: {}
+};

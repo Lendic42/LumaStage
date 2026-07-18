@@ -56,6 +56,12 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .hint { display: flex; align-items: center; gap: 13px; }.hint > div { min-width: 35px; height: 35px; display: grid; place-items: center; border-radius: 10px; background: #5e50c522; color: #9d8dff; }.hint p { margin: 0; }.hint b { color: #ccd0e2; }.error { color: #ff7892 !important; }
 .hint strong { color: #aef4d8; font-size: 15px; letter-spacing: .16em; white-space: nowrap; }
 .trust-reset { display: block; margin-top: 7px; padding: 0; border: 0; background: transparent; color: #777d98; font-size: 9px; text-decoration: underline; cursor: pointer; }
+.hint code { color: #aeb4ce; font-size: 10px; }
+.modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; background: #05060bc7; backdrop-filter: blur(14px); }
+.plugin-modal { width: 430px; padding: 28px; border: 1px solid #ffffff18; border-radius: 23px; background: linear-gradient(145deg, #1b1930, #10121e); box-shadow: 0 30px 100px #000a; text-align: center; }
+.plugin-mark { width: 52px; height: 52px; margin: 0 auto 18px; display: grid; place-items: center; border-radius: 16px; background: #705cff22; color: #a797ff; font-size: 24px; }
+.plugin-modal small { color: #797f9d; font-size: 9px; letter-spacing: .15em; }.plugin-modal h2 { margin: 9px 0; font-size: 21px; }.plugin-modal p { color: #a4a9c0; font-size: 12px; }.plugin-modal .modal-note { margin: 18px 0; padding: 13px; border-radius: 12px; background: #ffffff07; color: #777e98; line-height: 1.5; text-align: left; }
+.plugin-modal > div:last-child { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }.plugin-modal button { margin-top: 0; }
 .hotkeys { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .hotkeys button { min-width: 0; padding: 9px; text-align: left; border: 1px solid #ffffff12; border-radius: 9px; background: #ffffff07; cursor: pointer; }
 .hotkeys button:hover { border-color: #8d78ff66; background: #7660ff16; }
