@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -28,6 +28,11 @@ const bridge: LumaStageBridge = {
     ipcRenderer.on("vts-parameter-injection", handler);
     return () => ipcRenderer.removeListener("vts-parameter-injection", handler);
   },
+  onSceneWorkspaceChanged(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, workspace: SceneWorkspace) => listener(workspace);
+    ipcRenderer.on("scene-workspace-changed", handler);
+    return () => ipcRenderer.removeListener("scene-workspace-changed", handler);
+  },
   importModel: () => ipcRenderer.invoke("import-model") as Promise<ImportedModel | null>,
   getSceneWorkspace: () => ipcRenderer.invoke("get-scene-workspace") as Promise<SceneWorkspace>,
   createScene: (name) => ipcRenderer.invoke("create-scene", name) as Promise<SceneWorkspace>,
@@ -35,6 +40,9 @@ const bridge: LumaStageBridge = {
   updateScene: (id, update: SceneUpdate) => ipcRenderer.invoke("update-scene", id, update) as Promise<SceneWorkspace>,
   chooseSceneBackground: (id) => ipcRenderer.invoke("choose-scene-background", id) as Promise<SceneWorkspace | null>,
   deleteScene: (id) => ipcRenderer.invoke("delete-scene", id) as Promise<SceneWorkspace>,
+  chooseSceneItem: (sceneId) => ipcRenderer.invoke("choose-scene-item", sceneId) as Promise<SceneWorkspace | null>,
+  updateSceneItem: (sceneId, itemId, update: SceneItemUpdate) => ipcRenderer.invoke("update-scene-item", sceneId, itemId, update) as Promise<SceneWorkspace>,
+  deleteSceneItem: (sceneId, itemId) => ipcRenderer.invoke("delete-scene-item", sceneId, itemId) as Promise<SceneWorkspace>,
   getCubismCoreStatus: () => ipcRenderer.invoke("cubism-core-status") as Promise<CubismCoreStatus>,
   installCubismCore: () => ipcRenderer.invoke("install-cubism-core") as Promise<CubismCoreStatus | null>,
   setOverlayMode: (enabled) => ipcRenderer.invoke("set-overlay-mode", enabled) as Promise<boolean>,

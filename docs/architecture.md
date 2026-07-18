@@ -22,6 +22,8 @@ Custom tracking parameters are owned by the plugin name/developer identity, pers
 
 Scene documents are validated by the isolated `packages/scene-core` package and persisted as a versioned JSON library in the application's user-data directory. Only the main process sees model/background paths. The renderer receives display metadata and fixed custom-protocol URLs for the active assets.
 
+Visual scene items use the same boundary: absolute item paths remain in main-process persistence while the renderer receives a fixed `lumastage-item://active/<instance-id>` URL. A separate item-file catalog survives unloading scene instances. Local UI and VTube Studio API operations mutate the same validated item state and main broadcasts workspace changes to every renderer window.
+
 The renderer boundary is an adapter rather than a direct dependency on one model engine:
 
 - `CubismRenderer`: existing `.moc3`/`.model3.json` models through an installed Cubism Core.

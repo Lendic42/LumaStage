@@ -29,6 +29,9 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .stage { position: relative; overflow: hidden; display: grid; place-items: center; background: radial-gradient(circle at 50% 55%, #383062 0, #181a2b 36%, #10131e 72%); }
 .live2d-layer { position: absolute; inset: 0; z-index: 2; }
 .live2d-layer canvas { width: 100%; height: 100%; display: block; }
+.scene-item { position: absolute; max-width: none; max-height: none; user-select: none; cursor: pointer; filter: drop-shadow(0 12px 22px #0005); transform-origin: center; }
+.scene-item.selected { outline: 2px solid #9c88ff; outline-offset: 5px; border-radius: 4px; filter: drop-shadow(0 0 12px #816aff66); }
+.scene-item.locked { cursor: not-allowed; }
 .grid { position: absolute; inset: 0; opacity: .12; background-image: linear-gradient(#ffffff20 1px, transparent 1px), linear-gradient(90deg, #ffffff20 1px, transparent 1px); background-size: 38px 38px; mask-image: linear-gradient(to bottom, transparent, black 30%, black 75%, transparent); }
 .avatar-wrap { position: relative; z-index: 1; width: 300px; height: 520px; transition: transform 50ms linear; transform-origin: 50% 50%; }
 .avatar-halo { position: absolute; width: 290px; height: 290px; left: 5px; top: 60px; border-radius: 50%; background: #a895ff18; box-shadow: 0 0 90px #805cff44, inset 0 0 70px #ff74cf24; }
@@ -37,11 +40,12 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .avatar-face:before { content: ""; position: absolute; width: 140px; height: 75px; left: 3px; top: -20px; border-radius: 80% 40% 55% 20%; border-top: 26px solid #3d3470; transform: rotate(-4deg); }
 .eye { position: absolute; top: 77px; width: 31px; height: 22px; border-radius: 55% 50%; background: #fff; border-bottom: 3px solid #5a3a6d; overflow: hidden; transform-origin: center; }
 .eye.left { left: 29px; } .eye.right { right: 29px; }
-.eye i { display: block; width: 14px; height: 18px; margin: 3px auto 0; border-radius: 50%; background: linear-gradient(#8b68ff, #3b2b70); box-shadow: inset 0 0 0 4px #31225d; }
+.eye i { display: block; width: 14px; height: 18px; margin: 3px auto 0; border-radius: 50%; background: linear-gradient(#8b68ff, #3b2b70); box-shadow: inset 0 0 0 4px #31225d; transition: transform 35ms linear; }
 .mouth { position: absolute; left: 50%; top: 132px; transform: translateX(-50%); border-radius: 8px 8px 55% 55%; background: #733c5b; border-bottom: 3px solid #f7a8c7; transition: width 40ms linear, height 40ms linear; }
 .avatar-body { position: absolute; z-index: 0; left: 34px; bottom: -50px; width: 232px; height: 260px; border-radius: 44% 44% 20% 20%; background: linear-gradient(140deg, #7d69d8 0 20%, #29294c 21% 70%, #181a35); box-shadow: inset 0 0 0 2px #ffffff0d; }
-.tracking-pill { position: absolute; z-index: 3; bottom: 17px; left: 17px; padding: 9px 12px; border-radius: 10px; background: #080a12aa; color: #9ba1bb; font-size: 11px; display: flex; align-items: center; gap: 8px; backdrop-filter: blur(12px); }
-.inspector { display: grid; align-content: start; gap: 14px; overflow-y: auto; }
+.tracking-pill { position: absolute; z-index: 6; bottom: 17px; left: 17px; padding: 9px 12px; border-radius: 10px; background: #080a12aa; color: #9ba1bb; font-size: 11px; display: flex; align-items: center; gap: 8px; backdrop-filter: blur(12px); }
+.inspector { min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 14px; overflow-y: auto; padding-right: 4px; scrollbar-gutter: stable; }
+.inspector > .panel { flex: 0 0 auto; }
 .scene-panel { background: linear-gradient(155deg, #17162a, #11131f); }
 .tiny-add { padding: 5px 8px; border: 1px solid #8c75ff35; border-radius: 8px; background: #725cff15; color: #aa9cff; font-size: 9px; cursor: pointer; }
 .scene-tabs { display: flex; gap: 6px; margin: -6px 0 13px; overflow-x: auto; padding-bottom: 3px; }
@@ -62,6 +66,14 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .scene-actions { display: flex; justify-content: space-between; margin-top: 12px; }
 .scene-actions button { padding: 6px 8px; border: 1px solid #ffffff10; border-radius: 8px; background: transparent; color: #686e86; font-size: 9px; cursor: pointer; }
 .scene-actions button.active { border-color: #8d78ff55; color: #b9adff; }.scene-actions button:disabled { opacity: .3; cursor: default; }
+.item-panel { background: linear-gradient(150deg, #151827, #11131f); }
+.item-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: -4px 0 13px; }
+.item-tabs button { min-width: 0; padding: 5px; border: 1px solid #ffffff10; border-radius: 9px; background: #ffffff05; color: #777d96; cursor: pointer; }
+.item-tabs button.active { border-color: #8d78ff66; background: #7660ff18; color: #d6d0ff; }
+.item-tabs img { width: 100%; height: 42px; display: block; object-fit: contain; border-radius: 5px; background: #080a12; }
+.item-tabs span { display: block; margin-top: 4px; overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.item-panel .scene-actions { gap: 6px; }.item-panel .scene-actions button { flex: 1; }
+.empty-items { margin: 0 !important; padding: 10px; border: 1px dashed #ffffff12; border-radius: 10px; text-align: center; }
 .panel { padding: 20px; border-radius: 17px; }
 .model-panel { background: linear-gradient(150deg, #18172b, #11131f); }
 .panel h2 { margin: 8px 0 5px; font-size: 18px; }
@@ -77,6 +89,8 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .hint strong { color: #aef4d8; font-size: 15px; letter-spacing: .16em; white-space: nowrap; }
 .trust-reset { display: block; margin-top: 7px; padding: 0; border: 0; background: transparent; color: #777d98; font-size: 9px; text-decoration: underline; cursor: pointer; }
 .hint code { color: #aeb4ce; font-size: 10px; }
+.error-toast { position: fixed; z-index: 80; right: 24px; bottom: 24px; width: min(430px, calc(100vw - 48px)); padding: 14px 42px 14px 16px; border: 1px solid #ff789255; border-radius: 13px; background: #29131dee; color: #ffc2cd; box-shadow: 0 18px 60px #0009; font-size: 11px; line-height: 1.45; }
+.error-toast button { position: absolute; top: 8px; right: 9px; border: 0; background: transparent; color: #d78b9a; cursor: pointer; }
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; background: #05060bc7; backdrop-filter: blur(14px); }
 .plugin-modal { width: 430px; padding: 28px; border: 1px solid #ffffff18; border-radius: 23px; background: linear-gradient(145deg, #1b1930, #10121e); box-shadow: 0 30px 100px #000a; text-align: center; }
 .plugin-mark { width: 52px; height: 52px; margin: 0 auto 18px; display: grid; place-items: center; border-radius: 16px; background: #705cff22; color: #a797ff; font-size: 24px; }

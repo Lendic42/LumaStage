@@ -54,6 +54,8 @@ The stage toolbar includes a transparent always-on-top overlay for OBS/window ca
 
 Desktop scene presets persist the selected model, background and model transform. A scene can use a built-in gradient, solid color or local PNG/JPEG/WebP/GIF image, plus scale, X/Y offset, rotation and mirroring. Background files are exposed to the sandboxed renderer through a read-only protocol scoped to the active file; arbitrary filesystem paths cannot be requested from the UI.
 
+Scenes also support visual PNG/JPG/GIF items. Items can render behind or in front of the model, and the inspector controls position, size, rotation, opacity, flip and lock state. The item file catalog persists independently from scene instances, so plugins can unload an item and load the same file later.
+
 ## VTube Studio Plugin API compatibility
 
 LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`. Plugins must request access through the normal VTube Studio authentication messages; LumaStage shows a per-plugin approval dialog, stores only a token hash and provides a revoke button. The current tested subset includes:
@@ -64,6 +66,7 @@ LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`
 - `InputParameterListRequest`, `ParameterValueRequest`, `Live2DParameterListRequest` and one-second `InjectParameterDataRequest` overrides with `set`/`add` modes and weights.
 - session-scoped `EventSubscriptionRequest` for test, model load, tracking status, background, model config/movement, hotkey and item events. LumaStage emits live tracking, scene, transform and API-hotkey events rather than requiring polling.
 - plugin-owned `ParameterCreationRequest`/`ParameterDeletionRequest`, with the official naming/range limits, per-plugin ownership, persistent storage and cleanup when plugin access is revoked.
+- visual `ItemListRequest`, `ItemLoadRequest`, `ItemMoveRequest` and `ItemUnloadRequest`. API changes update the live canvas and scene editor immediately, emit `ItemEvent`, and honor `unloadWhenPluginDisconnects`.
 
 Unsupported request types return the official `APIError` shape instead of silently succeeding. See the compatibility matrix for the remaining API surface.
 

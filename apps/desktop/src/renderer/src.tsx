@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge";
+import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge";
 import type { CubismCoreStatus } from "../shared/bridge";
 import { Live2DStage } from "./components/Live2DStage";
 import "./style.css";
@@ -36,15 +36,17 @@ function AvatarPreview({ frame }: { frame: TrackingFrame }) {
   const jaw = frame.blendShapes.jawOpen ?? 0;
   const blinkLeft = frame.blendShapes.eyeBlinkLeft ?? 0;
   const blinkRight = frame.blendShapes.eyeBlinkRight ?? 0;
+  const smile = ((frame.blendShapes.mouthSmileLeft ?? 0) + (frame.blendShapes.mouthSmileRight ?? 0)) / 2;
+  const pupilTransform = `translate(${Math.max(-1, Math.min(1, frame.gaze.x)) * 7}px, ${Math.max(-1, Math.min(1, -frame.gaze.y)) * 5}px)`;
   const transform = `translate(${frame.head.yaw * 42}px, ${frame.head.pitch * 32}px) rotate(${frame.head.roll * -35}deg)`;
   return (
     <div className="avatar-wrap" style={{ transform }}>
       <div className="avatar-halo" />
       <div className="avatar-hair" />
       <div className="avatar-face">
-        <div className="eye left" style={{ transform: `scaleY(${Math.max(0.08, 1 - blinkLeft)})` }}><i /></div>
-        <div className="eye right" style={{ transform: `scaleY(${Math.max(0.08, 1 - blinkRight)})` }}><i /></div>
-        <div className="mouth" style={{ height: 5 + jaw * 30, width: 28 + jaw * 10 }} />
+        <div className="eye left" style={{ transform: `scaleY(${Math.max(0.08, 1 - blinkLeft)})` }}><i style={{ transform: pupilTransform }} /></div>
+        <div className="eye right" style={{ transform: `scaleY(${Math.max(0.08, 1 - blinkRight)})` }}><i style={{ transform: pupilTransform }} /></div>
+        <div className="mouth" style={{ height: 5 + jaw * 30 + smile * 3, width: 28 + jaw * 10 + smile * 13, borderRadius: `${8 + smile * 18}px ${8 + smile * 18}px ${55 + smile * 35}% ${55 + smile * 35}%` }} />
       </div>
       <div className="avatar-body" />
     </div>
@@ -70,6 +72,7 @@ function App() {
   const [pluginRequests, setPluginRequests] = useState<PluginAuthorizationRequest[]>([]);
   const [parameterInjection, setParameterInjection] = useState<{ nonce: number; value: VtsParameterInjection } | null>(null);
   const [sceneLibrary, setSceneLibrary] = useState<SceneLibrary | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
   useEffect(() => {
     const offFrame = window.lumastage.onTrackingFrame(setFrame);
@@ -77,9 +80,10 @@ function App() {
     const offPluginRequest = window.lumastage.onPluginAuthorizationRequest((request) => setPluginRequests((items) => [...items, request]));
     const offVtsHotkey = window.lumastage.onVtsHotkeyTrigger((hotkey) => setHotkeyRequest({ nonce: Date.now(), hotkey }));
     const offParameterInjection = window.lumastage.onVtsParameterInjection((value) => setParameterInjection({ nonce: Date.now(), value }));
+    const offSceneWorkspace = window.lumastage.onSceneWorkspaceChanged((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); });
     void window.lumastage.getCubismCoreStatus().then(setCoreStatus);
     void window.lumastage.getSceneWorkspace().then((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); };
+    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); offSceneWorkspace(); };
   }, []);
 
   useEffect(() => {
@@ -92,11 +96,44 @@ function App() {
 
   const connectionLabel = useMemo(() => status.connectedDevices > 0 ? "iPhone connected" : "Waiting for iPhone", [status]);
   const activeScene = sceneLibrary?.scenes.find((scene) => scene.id === sceneLibrary.activeSceneId);
+  const selectedItem = activeScene?.items.find((item) => item.id === selectedItemId) ?? null;
+  useEffect(() => {
+    if (selectedItemId && activeScene?.items.some((item) => item.id === selectedItemId)) return;
+    setSelectedItemId(activeScene?.items[0]?.id ?? null);
+  }, [activeScene, selectedItemId]);
   const applyWorkspace = (workspace: SceneWorkspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); };
   const updateActiveScene = async (update: SceneUpdate) => {
     if (!activeScene) return;
     try { applyWorkspace(await window.lumastage.updateScene(activeScene.id, update)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const updateSelectedItem = async (update: SceneItemUpdate) => {
+    if (!activeScene || !selectedItem) return;
+    try { applyWorkspace(await window.lumastage.updateSceneItem(activeScene.id, selectedItem.id, update)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const startItemDrag = (event: React.PointerEvent<HTMLImageElement>, item: SceneItem) => {
+    if (!activeScene || overlayMode) return;
+    setSelectedItemId(item.id);
+    if (item.locked) return;
+    event.preventDefault();
+    const stage = event.currentTarget.closest(".stage")?.getBoundingClientRect();
+    if (!stage) return;
+    const origin = { x: event.clientX, y: event.clientY, positionX: item.positionX, positionY: item.positionY };
+    let nextX = item.positionX;
+    let nextY = item.positionY;
+    const move = (pointer: PointerEvent) => {
+      nextX = origin.positionX + (pointer.clientX - origin.x) * 2 / stage.width;
+      nextY = origin.positionY - (pointer.clientY - origin.y) * 2 / stage.height;
+      setSceneLibrary((library) => library ? { ...library, scenes: library.scenes.map((scene) => scene.id === activeScene.id ? { ...scene, items: scene.items.map((candidate) => candidate.id === item.id ? { ...candidate, positionX: nextX, positionY: nextY } : candidate) } : scene) } : library);
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      void window.lumastage.updateSceneItem(activeScene.id, item.id, { positionX: nextX, positionY: nextY }).then(applyWorkspace).catch((reason) => setError(String(reason)));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish, { once: true });
   };
   const importModel = async () => {
     setError(null);
@@ -154,11 +191,12 @@ function App() {
       <div className="stage-grid">
         <section className="stage-card">
           <div className="stage-toolbar"><span>{activeScene?.name ?? "Main Stage"} · {model?.name ?? "Preview avatar"}</span><div><button onClick={() => void updateActiveScene({ transform: neutralSceneTransform })}>⌖ Fit</button><button onClick={() => void toggleOverlay()}>{overlayMode ? "Exit overlay" : "▣ Transparent"}</button></div></div>
-          <div className="stage" style={stageStyle}><div className="grid" />{!rendererReady && <AvatarPreview frame={frame} />}<Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} parameterInjection={parameterInjection} sceneTransform={activeScene?.transform ?? neutralSceneTransform} onReady={setRendererReady} onError={setRendererError} /><div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div>{overlayMode && <button className="exit-overlay" onClick={() => void toggleOverlay(false)}>Exit overlay · Esc</button>}</div>
+          <div className="stage" style={stageStyle}><div className="grid" />{activeScene?.items.map((item) => <img key={item.id} className={`scene-item${selectedItemId === item.id && !overlayMode ? " selected" : ""}${item.locked ? " locked" : ""}`} src={`${item.imageUrl}?item=${item.id}`} alt={item.fileName} draggable={false} onPointerDown={(event) => startItemDrag(event, item)} style={{ left: `${(item.positionX + 1) * 50}%`, top: `${(1 - item.positionY) * 50}%`, width: `${item.size * 100}%`, opacity: item.opacity, zIndex: item.order > 0 ? 4 : 1, transform: `translate(-50%, -50%) rotate(${item.rotation}deg) scaleX(${item.flipped ? -1 : 1})`, pointerEvents: overlayMode ? "none" : "auto" }} />)}{!rendererReady && <AvatarPreview frame={frame} />}<Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} parameterInjection={parameterInjection} sceneTransform={activeScene?.transform ?? neutralSceneTransform} onReady={setRendererReady} onError={setRendererError} /><div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div>{overlayMode && <button className="exit-overlay" onClick={() => void toggleOverlay(false)}>Exit overlay · Esc</button>}</div>
         </section>
 
         <aside className="inspector">
           {activeScene && <section className="panel scene-panel"><div className="panel-heading"><h3>Scenes</h3><button className="tiny-add" onClick={() => void window.lumastage.createScene().then(applyWorkspace).catch((reason) => setError(String(reason)))}>＋ New</button></div><div className="scene-tabs">{sceneLibrary?.scenes.map((scene) => <button key={scene.id} className={scene.id === activeScene.id ? "active" : ""} onClick={() => void window.lumastage.activateScene(scene.id).then(applyWorkspace).catch((reason) => setError(String(reason)))}>{scene.name}</button>)}</div><label className="scene-name">Scene name<input value={activeScene.name} maxLength={48} onChange={(event) => setSceneLibrary((library) => library ? { ...library, scenes: library.scenes.map((scene) => scene.id === activeScene.id ? { ...scene, name: event.target.value } : scene) } : library)} onBlur={(event) => void updateActiveScene({ name: event.target.value || "Scene" })} /></label><div className="background-row"><button className="bg-dot violet" title="Violet" onClick={() => void updateActiveScene({ background: { kind: "gradient", preset: "violet" } })} /><button className="bg-dot sunset" title="Sunset" onClick={() => void updateActiveScene({ background: { kind: "gradient", preset: "sunset" } })} /><button className="bg-dot ocean" title="Ocean" onClick={() => void updateActiveScene({ background: { kind: "gradient", preset: "ocean" } })} /><button className="bg-dot studio" title="Studio" onClick={() => void updateActiveScene({ background: { kind: "gradient", preset: "studio" } })} /><input aria-label="Scene background color" type="color" value={activeScene.background.kind === "color" ? activeScene.background.color : "#29233f"} onChange={(event) => void updateActiveScene({ background: { kind: "color", color: event.target.value } })} /><button className="image-pick" onClick={() => void window.lumastage.chooseSceneBackground(activeScene.id).then((workspace) => workspace && applyWorkspace(workspace)).catch((reason) => setError(String(reason)))}>▧ Image</button></div><div className="transform-grid"><label>Scale <b>{activeScene.transform.scale.toFixed(2)}×</b><input type="range" min="0.2" max="3" step="0.01" value={activeScene.transform.scale} onChange={(event) => void updateActiveScene({ transform: { scale: Number(event.target.value) } })} /></label><label>X <b>{Math.round(activeScene.transform.positionX * 100)}</b><input type="range" min="-1" max="1" step="0.01" value={activeScene.transform.positionX} onChange={(event) => void updateActiveScene({ transform: { positionX: Number(event.target.value) } })} /></label><label>Y <b>{Math.round(activeScene.transform.positionY * 100)}</b><input type="range" min="-1" max="1" step="0.01" value={activeScene.transform.positionY} onChange={(event) => void updateActiveScene({ transform: { positionY: Number(event.target.value) } })} /></label><label>Rotate <b>{Math.round(activeScene.transform.rotation)}°</b><input type="range" min="-180" max="180" step="1" value={activeScene.transform.rotation} onChange={(event) => void updateActiveScene({ transform: { rotation: Number(event.target.value) } })} /></label></div><div className="scene-actions"><button className={activeScene.transform.mirror ? "active" : ""} onClick={() => void updateActiveScene({ transform: { mirror: !activeScene.transform.mirror } })}>⇋ Mirror</button><button disabled={(sceneLibrary?.scenes.length ?? 0) < 2} onClick={() => void window.lumastage.deleteScene(activeScene.id).then(applyWorkspace).catch((reason) => setError(String(reason)))}>Delete</button></div></section>}
+          {activeScene && <section className="panel item-panel"><div className="panel-heading"><h3>Scene items</h3><button className="tiny-add" onClick={() => void window.lumastage.chooseSceneItem(activeScene.id).then((workspace) => workspace && applyWorkspace(workspace)).catch((reason) => setError(String(reason)))}>＋ Image</button></div>{activeScene.items.length ? <><div className="item-tabs">{activeScene.items.map((item) => <button key={item.id} className={item.id === selectedItemId ? "active" : ""} onClick={() => setSelectedItemId(item.id)}><img src={`${item.imageUrl}?thumb=${item.id}`} alt="" /><span>{item.fileName}</span></button>)}</div>{selectedItem && <><div className="transform-grid"><label>Size <b>{selectedItem.size.toFixed(2)}</b><input type="range" min="0.01" max="1" step="0.01" value={selectedItem.size} onChange={(event) => void updateSelectedItem({ size: Number(event.target.value) })} /></label><label>Opacity <b>{Math.round(selectedItem.opacity * 100)}%</b><input type="range" min="0" max="1" step="0.01" value={selectedItem.opacity} onChange={(event) => void updateSelectedItem({ opacity: Number(event.target.value) })} /></label><label>X <b>{selectedItem.positionX.toFixed(2)}</b><input type="range" min="-1.5" max="1.5" step="0.01" value={selectedItem.positionX} onChange={(event) => void updateSelectedItem({ positionX: Number(event.target.value) })} /></label><label>Y <b>{selectedItem.positionY.toFixed(2)}</b><input type="range" min="-1.5" max="1.5" step="0.01" value={selectedItem.positionY} onChange={(event) => void updateSelectedItem({ positionY: Number(event.target.value) })} /></label><label>Rotate <b>{Math.round(selectedItem.rotation)}°</b><input type="range" min="-180" max="180" step="1" value={selectedItem.rotation} onChange={(event) => void updateSelectedItem({ rotation: Number(event.target.value) })} /></label></div><div className="scene-actions"><button className={selectedItem.flipped ? "active" : ""} onClick={() => void updateSelectedItem({ flipped: !selectedItem.flipped })}>⇋ Flip</button><button className={selectedItem.locked ? "active" : ""} onClick={() => void updateSelectedItem({ locked: !selectedItem.locked })}>{selectedItem.locked ? "🔒 Locked" : "Lock"}</button><button onClick={() => void window.lumastage.deleteSceneItem(activeScene.id, selectedItem.id).then(applyWorkspace).catch((reason) => setError(String(reason)))}>Delete</button></div></>}</> : <p className="empty-items">Add PNG, JPG or GIF props. Plugins can control the same item layer.</p>}</section>}
           <section className="panel model-panel"><small>ACTIVE MODEL</small><h2>{model?.vTubeModelName ?? model?.name ?? "No model loaded"}</h2><p>{model ? `${model.textureCount} textures · ${model.expressionCount} expressions · ${model.motionCount} motions${model.vTubeParameterMappings.length ? ` · ${model.vTubeParameterMappings.length} VTS mappings` : ""}` : "Import a Cubism/VTube Studio model folder to begin."}</p>{model?.missingFiles.length ? <p className="error">Missing: {model.missingFiles.join(", ")}</p> : null}<button className="primary" onClick={importModel}>＋ Import model folder</button>{!coreStatus.available && <button className="secondary" onClick={installCore}>Install official Cubism Core</button>}{rendererError && <p className="error">{rendererError}</p>}{error && <p className="error">{error}</p>}</section>
           <section className="panel"><div className="panel-heading"><h3>Live signals</h3><span>{frame.sequence ? `#${frame.sequence}` : "idle"}</span></div><Meter label="Mouth" value={frame.blendShapes.jawOpen ?? 0} /><Meter label="Blink L" value={frame.blendShapes.eyeBlinkLeft ?? 0} /><Meter label="Blink R" value={frame.blendShapes.eyeBlinkRight ?? 0} /><Meter label="Smile" value={((frame.blendShapes.mouthSmileLeft ?? 0) + (frame.blendShapes.mouthSmileRight ?? 0)) / 2} /><button className="secondary" disabled={!frame.faceFound} onClick={() => setCalibrationNonce((value) => value + 1)}>◎ Calibrate neutral pose</button></section>
           {model?.vTubeHotkeys.length ? <section className="panel"><div className="panel-heading"><h3>Model hotkeys</h3><span>{model.vTubeHotkeys.length}</span></div><div className="hotkeys">{model.vTubeHotkeys.map((hotkey, index) => <button key={hotkey.id || `${hotkey.name}-${index}`} onClick={() => triggerHotkey(hotkey)}><span>{hotkey.name || hotkey.action}</span><small>{hotkey.action}</small></button>)}</div></section> : null}
@@ -167,6 +205,7 @@ function App() {
         </aside>
       </div>
     </section>
+    {(error || rendererError) && <div className="error-toast" role="alert">{error ?? rendererError}<button aria-label="Dismiss error" onClick={() => { setError(null); setRendererError(null); }}>×</button></div>}
     {pluginRequests[0] && <div className="modal-backdrop"><section className="plugin-modal"><div className="plugin-mark">◫</div><small>PLUGIN API REQUEST</small><h2>Allow “{pluginRequests[0].pluginName}”?</h2><p>Developer: {pluginRequests[0].pluginDeveloper}</p><p className="modal-note">This local plugin will be able to read model/tracking state and trigger supported model hotkeys. You can revoke access later.</p><div><button className="secondary" onClick={() => void resolvePluginRequest(false)}>Deny</button><button className="primary" onClick={() => void resolvePluginRequest(true)}>Allow plugin</button></div></section></div>}
   </main>;
 }

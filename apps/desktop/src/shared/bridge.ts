@@ -59,7 +59,33 @@ export interface ScenePreset {
   name: string;
   background: SceneBackground;
   transform: SceneTransform;
+  items: SceneItem[];
   modelName?: string;
+}
+
+export interface SceneItem {
+  id: string;
+  fileName: string;
+  imageUrl: string;
+  type: "PNG" | "JPG" | "GIF";
+  positionX: number;
+  positionY: number;
+  size: number;
+  rotation: number;
+  order: number;
+  flipped: boolean;
+  locked: boolean;
+  opacity: number;
+}
+
+export interface SceneItemUpdate {
+  positionX?: number;
+  positionY?: number;
+  size?: number;
+  rotation?: number;
+  flipped?: boolean;
+  locked?: boolean;
+  opacity?: number;
 }
 
 export interface SceneLibrary {
@@ -108,6 +134,7 @@ export interface LumaStageBridge {
   onPluginAuthorizationRequest(listener: (request: PluginAuthorizationRequest) => void): () => void;
   onVtsHotkeyTrigger(listener: (hotkey: ImportedHotkey) => void): () => void;
   onVtsParameterInjection(listener: (injection: VtsParameterInjection) => void): () => void;
+  onSceneWorkspaceChanged(listener: (workspace: SceneWorkspace) => void): () => void;
   importModel(): Promise<ImportedModel | null>;
   getSceneWorkspace(): Promise<SceneWorkspace>;
   createScene(name?: string): Promise<SceneWorkspace>;
@@ -115,6 +142,9 @@ export interface LumaStageBridge {
   updateScene(id: string, update: SceneUpdate): Promise<SceneWorkspace>;
   chooseSceneBackground(id: string): Promise<SceneWorkspace | null>;
   deleteScene(id: string): Promise<SceneWorkspace>;
+  chooseSceneItem(sceneId: string): Promise<SceneWorkspace | null>;
+  updateSceneItem(sceneId: string, itemId: string, update: SceneItemUpdate): Promise<SceneWorkspace>;
+  deleteSceneItem(sceneId: string, itemId: string): Promise<SceneWorkspace>;
   getCubismCoreStatus(): Promise<CubismCoreStatus>;
   installCubismCore(): Promise<CubismCoreStatus | null>;
   setOverlayMode(enabled: boolean): Promise<boolean>;

@@ -8,14 +8,15 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
 import { inspectCubismModelFolder } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsParameter } from "@lumastage/vts-api";
-import { createDefaultSceneLibrary, normalizeSceneTransform, parseSceneLibrary, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
+import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsParameter, type VtsSceneItem } from "@lumastage/vts-api";
+import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
   { scheme: "lumastage-core", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
-  { scheme: "lumastage-background", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
+  { scheme: "lumastage-background", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+  { scheme: "lumastage-item", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
 ]);
 
 function configuredPort(environmentName: string, fallback: number): number {
@@ -48,6 +49,9 @@ const pluginTokens = new Map<string, string>();
 interface StoredCustomParameter extends VtsParameter { ownerKey: string; explanation: string }
 const customParameters = new Map<string, StoredCustomParameter>();
 let customParameterSaveQueue: Promise<void> = Promise.resolve();
+interface ItemFileEntry { fileName: string; filePath: string; type: "PNG" | "JPG" | "GIF" }
+const itemFiles = new Map<string, ItemFileEntry>();
+let itemFileSaveQueue: Promise<void> = Promise.resolve();
 const pluginSessions = new Map<WebSocket, VtsApiSession>();
 const pendingPluginApprovals = new Map<string, { resolve(approved: boolean): void; timeout: NodeJS.Timeout }>();
 let vtsApiServer: WebSocketServer | undefined;
@@ -65,6 +69,39 @@ function pluginAccessPath(): string {
 
 function customParametersPath(): string {
   return join(app.getPath("userData"), "custom-parameters.json");
+}
+
+function itemFilesPath(): string {
+  return join(app.getPath("userData"), "item-files.json");
+}
+
+function saveItemFiles(): Promise<void> {
+  const payload = `${JSON.stringify(Object.fromEntries(itemFiles), null, 2)}\n`;
+  const operation = itemFileSaveQueue.catch(() => undefined).then(async () => {
+    await mkdir(app.getPath("userData"), { recursive: true });
+    await writeFile(itemFilesPath(), payload, { encoding: "utf8", mode: 0o600 });
+  });
+  itemFileSaveQueue = operation;
+  return operation;
+}
+
+async function loadItemFiles(): Promise<void> {
+  try {
+    const parsed = JSON.parse(await readFile(itemFilesPath(), "utf8")) as Record<string, unknown>;
+    for (const [fileName, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object") continue;
+      const entry = value as Record<string, unknown>;
+      if (typeof entry.filePath !== "string" || !["PNG", "JPG", "GIF"].includes(String(entry.type))) continue;
+      itemFiles.set(fileName, { fileName, filePath: entry.filePath, type: entry.type as ItemFileEntry["type"] });
+    }
+  } catch {
+    // First launch or invalid item file registry.
+  }
+}
+
+async function backfillItemFilesFromScenes(): Promise<void> {
+  for (const scene of sceneLibrary.scenes) for (const item of scene.items) itemFiles.set(item.fileName, { fileName: item.fileName, filePath: item.filePath, type: item.type });
+  await saveItemFiles();
 }
 
 function saveCustomParameters(): Promise<void> {
@@ -132,7 +169,16 @@ function publicScene(scene: StoredScenePreset): ScenePreset {
       ? { kind: "image", imageUrl: scene.id === sceneLibrary.activeSceneId ? "lumastage-background://active/image" : "" }
       : scene.background,
     transform: scene.transform,
+    items: scene.items.map(publicSceneItem),
     modelName: scene.modelName
+  };
+}
+
+function publicSceneItem(item: StoredSceneItem): SceneItem {
+  return {
+    id: item.id, fileName: item.fileName, imageUrl: `lumastage-item://active/${encodeURIComponent(item.id)}`, type: item.type,
+    positionX: item.positionX, positionY: item.positionY, size: item.size, rotation: item.rotation, order: item.order,
+    flipped: item.flipped, locked: item.locked, opacity: item.opacity
   };
 }
 
@@ -191,6 +237,147 @@ async function sceneWorkspace(reloadModel = false): Promise<SceneWorkspace> {
 function requireSceneId(value: unknown): string {
   if (typeof value !== "string" || !sceneLibrary.scenes.some((scene) => scene.id === value)) throw new Error("Scene does not exist");
   return value;
+}
+
+function requireScene(value: unknown): StoredScenePreset {
+  const id = requireSceneId(value);
+  return sceneLibrary.scenes.find((scene) => scene.id === id)!;
+}
+
+function requireSceneItem(scene: StoredScenePreset, value: unknown): StoredSceneItem {
+  if (typeof value !== "string") throw new Error("Item ID must be a string");
+  const item = scene.items.find((candidate) => candidate.id === value);
+  if (!item) throw new Error("Scene item does not exist");
+  return item;
+}
+
+function imageItemType(path: string): "PNG" | "JPG" | "GIF" | undefined {
+  const extension = path.toLowerCase().split(".").pop();
+  return extension === "png" ? "PNG" : extension === "jpg" || extension === "jpeg" ? "JPG" : extension === "gif" ? "GIF" : undefined;
+}
+
+function availableItemOrder(scene: StoredScenePreset): number | undefined {
+  const used = new Set(scene.items.map((item) => item.order));
+  return [...Array.from({ length: 30 }, (_, index) => index + 1), ...Array.from({ length: 30 }, (_, index) => -index - 1)].find((order) => !used.has(order));
+}
+
+function itemEventData(item: StoredSceneItem, itemEventType: string): Record<string, unknown> {
+  return { itemEventType, itemInstanceID: item.id, itemFileName: item.fileName, itemPosition: { x: item.positionX, y: item.positionY } };
+}
+
+function vtsSceneItem(item: StoredSceneItem): VtsSceneItem {
+  return {
+    fileName: item.fileName, instanceID: item.id, order: item.order, type: item.type, censored: item.censored,
+    flipped: item.flipped, locked: item.locked, smoothing: item.smoothing,
+    framerate: item.type === "GIF" ? 30 : 0, frameCount: item.type === "GIF" ? 1 : -1, currentFrame: item.type === "GIF" ? 0 : -1,
+    pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: storedActiveScene().name, fromWorkshop: false
+  };
+}
+
+function broadcastSceneWorkspace(): void {
+  broadcast("scene-workspace-changed", { library: publicSceneLibrary(), model: activeImportedModel ?? null } satisfies SceneWorkspace);
+}
+
+function itemFileCatalog(): Map<string, ItemFileEntry> {
+  const catalog = new Map(itemFiles);
+  for (const scene of sceneLibrary.scenes) for (const item of scene.items) if (!catalog.has(item.fileName)) catalog.set(item.fileName, { fileName: item.fileName, filePath: item.filePath, type: item.type });
+  return catalog;
+}
+
+function listVtsItems(): ReturnType<VtsApiHost["listItems"]> {
+  const scene = storedActiveScene();
+  const used = new Set(scene.items.map((item) => item.order));
+  const availableSpots = [...Array.from({ length: 30 }, (_, index) => -30 + index), ...Array.from({ length: 30 }, (_, index) => index + 1)].filter((order) => !used.has(order));
+  const catalog = itemFileCatalog();
+  return {
+    items: scene.items.map(vtsSceneItem), availableSpots,
+    availableItemFiles: [...catalog.values()].map((item) => ({ fileName: item.fileName, type: item.type, loadedCount: scene.items.filter((candidate) => candidate.fileName === item.fileName).length }))
+  };
+}
+
+async function loadVtsItem(pluginName: string, pluginDeveloper: string, ownerSessionID: string, input: VtsItemLoadInput): Promise<{ item?: VtsSceneItem; error?: "not-found" | "limit" | "order" }> {
+  const scene = storedActiveScene();
+  if (scene.items.length >= 60) return { error: "limit" };
+  const source = itemFileCatalog().get(input.fileName);
+  if (!source) return { error: "not-found" };
+  try {
+    const sourceStat = await stat(source.filePath);
+    if (!sourceStat.isFile() || sourceStat.size > 20 * 1024 * 1024) return { error: "not-found" };
+  } catch {
+    return { error: "not-found" };
+  }
+  const used = new Set(scene.items.map((item) => item.order));
+  let order = input.order;
+  if (used.has(order)) {
+    if (input.failIfOrderTaken) return { error: "order" };
+    const candidates = [...Array.from({ length: 30 - order }, (_, index) => order + index + 1), ...listVtsItems().availableSpots];
+    const replacement = candidates.find((candidate) => candidate !== 0 && candidate >= -30 && candidate <= 30 && !used.has(candidate));
+    if (replacement === undefined) return { error: "limit" };
+    order = replacement;
+  }
+  const item: StoredSceneItem = {
+    id: randomUUID(), fileName: source.fileName, filePath: source.filePath, type: source.type,
+    positionX: input.positionX, positionY: input.positionY, size: input.size,
+    rotation: input.rotation, order, smoothing: input.smoothing, censored: input.censored, flipped: input.flipped,
+    locked: input.locked, opacity: 1, unloadWhenPluginDisconnects: input.unloadWhenPluginDisconnects,
+    ownerKey: pluginKey(pluginName, pluginDeveloper), ownerSessionID
+  };
+  scene.items.push(item);
+  await saveScenes();
+  broadcastSceneWorkspace();
+  sendVtsEvent("ItemEvent", itemEventData(item, "Added"));
+  return { item: vtsSceneItem(item) };
+}
+
+async function unloadVtsItems(pluginName: string, pluginDeveloper: string, input: { unloadAllInScene: boolean; unloadAllLoadedByThisPlugin: boolean; allowOthers: boolean; instanceIDs: string[]; fileNames: string[] }): Promise<VtsSceneItem[]> {
+  const scene = storedActiveScene();
+  const owner = pluginKey(pluginName, pluginDeveloper);
+  const removed = scene.items.filter((item) => {
+    if (!input.allowOthers && item.ownerKey !== owner) return false;
+    if (input.unloadAllInScene) return true;
+    if (input.unloadAllLoadedByThisPlugin && item.ownerKey === owner) return true;
+    return input.instanceIDs.includes(item.id) || input.fileNames.includes(item.fileName);
+  });
+  if (removed.length === 0) return [];
+  const removedIDs = new Set(removed.map((item) => item.id));
+  scene.items = scene.items.filter((item) => !removedIDs.has(item.id));
+  await saveScenes();
+  broadcastSceneWorkspace();
+  for (const item of removed) sendVtsEvent("ItemEvent", itemEventData(item, "Removed"));
+  return removed.map(vtsSceneItem);
+}
+
+async function moveVtsItems(inputs: VtsItemMoveInput[]): Promise<Array<{ itemInstanceID: string; success: boolean; errorID: number }>> {
+  const scene = storedActiveScene();
+  const latest = new Map(inputs.map((input) => [input.itemInstanceID, input]));
+  const results: Array<{ itemInstanceID: string; success: boolean; errorID: number }> = [];
+  for (const input of latest.values()) {
+    const item = scene.items.find((candidate) => candidate.id === input.itemInstanceID);
+    if (!item || item.locked) { results.push({ itemInstanceID: input.itemInstanceID, success: false, errorID: 1122 }); continue; }
+    if (input.order !== undefined && (!Number.isInteger(input.order) || input.order === 0 || input.order < -30 || input.order > 30 || scene.items.some((candidate) => candidate.id !== item.id && candidate.order === input.order))) {
+      results.push({ itemInstanceID: input.itemInstanceID, success: false, errorID: 1123 }); continue;
+    }
+    Object.assign(item, normalizeSceneItemTransform({ ...input, flipped: input.setFlip ? input.flip : item.flipped }, item));
+    if (input.order !== undefined) item.order = input.order;
+    results.push({ itemInstanceID: item.id, success: true, errorID: -1 });
+  }
+  if (results.some((result) => result.success)) {
+    await saveScenes();
+    broadcastSceneWorkspace();
+  }
+  return results;
+}
+
+async function cleanupDisconnectedPluginItems(apiSession: VtsApiSession): Promise<void> {
+  if (!apiSession.sessionID) return;
+  const scene = storedActiveScene();
+  const removed = scene.items.filter((item) => item.ownerSessionID === apiSession.sessionID && item.unloadWhenPluginDisconnects);
+  if (!removed.length) return;
+  const ids = new Set(removed.map((item) => item.id));
+  scene.items = scene.items.filter((item) => !ids.has(item.id));
+  await saveScenes();
+  broadcastSceneWorkspace();
+  for (const item of removed) sendVtsEvent("ItemEvent", itemEventData(item, "Removed"));
 }
 
 function pluginKey(name: string, developer: string): string {
@@ -425,6 +612,24 @@ function installAssetProtocols(): void {
       return new Response("Scene background not found", { status: 404 });
     }
   });
+
+  void session.defaultSession.protocol.handle("lumastage-item", async (request) => {
+    const url = new URL(request.url);
+    if (url.host !== "active") return new Response("Unknown scene item", { status: 404 });
+    let itemId: string;
+    try { itemId = decodeURIComponent(url.pathname.replace(/^\/+/, "")); }
+    catch { return new Response("Invalid scene item ID", { status: 400 }); }
+    const item = storedActiveScene().items.find((candidate) => candidate.id === itemId);
+    if (!item) return new Response("Scene item not found", { status: 404 });
+    try {
+      const image = await realpath(item.filePath);
+      const imageStat = await stat(image);
+      if (!imageStat.isFile() || imageStat.size > 20 * 1024 * 1024) return new Response("Invalid scene item", { status: 403 });
+      return await net.fetch(pathToFileURL(image).toString());
+    } catch {
+      return new Response("Scene item asset not found", { status: 404 });
+    }
+  });
 }
 
 function broadcast(channel: string, payload: unknown): void {
@@ -575,7 +780,11 @@ function startVtsApiServer(): void {
       return [];
     },
     createCustomParameter,
-    deleteCustomParameter
+    deleteCustomParameter,
+    listItems: listVtsItems,
+    loadItem: loadVtsItem,
+    unloadItems: unloadVtsItems,
+    moveItems: moveVtsItems
   };
 
   vtsApiServer = new WebSocketServer({ host: "127.0.0.1", port: VTS_API_PORT, maxPayload: 1024 * 1024 });
@@ -588,7 +797,7 @@ function startVtsApiServer(): void {
     publishStatus();
   });
   vtsApiServer.on("connection", (socket) => {
-    const apiSession: VtsApiSession = { authenticated: false };
+    const apiSession: VtsApiSession = { authenticated: false, sessionID: randomUUID() };
     pluginSessions.set(socket, apiSession);
     socket.on("message", async (raw) => {
       try {
@@ -616,6 +825,7 @@ function startVtsApiServer(): void {
       }
     });
     socket.on("close", () => {
+      void cleanupDisconnectedPluginItems(apiSession);
       pluginSessions.delete(socket);
       publishStatus();
     });
@@ -735,7 +945,8 @@ app.whenReady().then(async () => {
       id,
       name,
       background: { kind: "gradient", preset: "studio" },
-      transform: { scale: 1, positionX: 0, positionY: 0, rotation: 0, mirror: false }
+      transform: { scale: 1, positionX: 0, positionY: 0, rotation: 0, mirror: false },
+      items: []
     });
     sceneLibrary.activeSceneId = id;
     clearActiveModel();
@@ -801,6 +1012,54 @@ app.whenReady().then(async () => {
     if (id === sceneLibrary.activeSceneId) activeBackgroundPath = scene.background.imagePath;
     await saveScenes();
     if (id === sceneLibrary.activeSceneId) sendVtsEvent("BackgroundChangedEvent", { backgroundName: basename(scene.background.imagePath) });
+    return sceneWorkspace();
+  });
+  ipcMain.handle("choose-scene-item", async (_event, requestedSceneId: unknown) => {
+    const scene = requireScene(requestedSceneId);
+    if (scene.items.length >= 60) throw new Error("This scene already has 60 items");
+    const order = availableItemOrder(scene);
+    if (order === undefined) throw new Error("No item order slots are available");
+    const result = await dialog.showOpenDialog({
+      title: "Add an image item",
+      properties: ["openFile"],
+      filters: [{ name: "Image items", extensions: ["png", "jpg", "jpeg", "gif"] }]
+    });
+    const sourcePath = result.filePaths[0];
+    if (result.canceled || !sourcePath) return null;
+    const type = imageItemType(sourcePath);
+    if (!type) throw new Error("Only PNG, JPG, and GIF items are supported");
+    const sourceStat = await stat(sourcePath);
+    if (!sourceStat.isFile() || sourceStat.size > 20 * 1024 * 1024) throw new Error("Item image must be smaller than 20 MB");
+    const canonicalSourcePath = await realpath(sourcePath);
+    const existingFile = itemFiles.get(basename(sourcePath));
+    if (existingFile && existingFile.filePath !== canonicalSourcePath) throw new Error("An item file with this filename is already in the library");
+    const item: StoredSceneItem = {
+      id: randomUUID(), fileName: basename(sourcePath), filePath: canonicalSourcePath, type,
+      positionX: 0, positionY: 0, size: 0.32, rotation: 0, order, flipped: false, locked: false,
+      censored: false, smoothing: 0, opacity: 1, unloadWhenPluginDisconnects: false
+    };
+    scene.items.push(item);
+    itemFiles.set(item.fileName, { fileName: item.fileName, filePath: item.filePath, type: item.type });
+    await Promise.all([saveScenes(), saveItemFiles()]);
+    if (scene.id === sceneLibrary.activeSceneId) sendVtsEvent("ItemEvent", itemEventData(item, "Added"));
+    return sceneWorkspace();
+  });
+  ipcMain.handle("update-scene-item", async (_event, requestedSceneId: unknown, requestedItemId: unknown, requestedUpdate: unknown) => {
+    const scene = requireScene(requestedSceneId);
+    const item = requireSceneItem(scene, requestedItemId);
+    if (!requestedUpdate || typeof requestedUpdate !== "object" || Array.isArray(requestedUpdate)) throw new Error("Invalid item update");
+    const wasLocked = item.locked;
+    Object.assign(item, normalizeSceneItemTransform(requestedUpdate as SceneItemUpdate, item));
+    await saveScenes();
+    if (scene.id === sceneLibrary.activeSceneId && item.locked !== wasLocked) sendVtsEvent("ItemEvent", itemEventData(item, item.locked ? "Locked" : "Unlocked"));
+    return sceneWorkspace();
+  });
+  ipcMain.handle("delete-scene-item", async (_event, requestedSceneId: unknown, requestedItemId: unknown) => {
+    const scene = requireScene(requestedSceneId);
+    const item = requireSceneItem(scene, requestedItemId);
+    scene.items = scene.items.filter((candidate) => candidate.id !== item.id);
+    await saveScenes();
+    if (scene.id === sceneLibrary.activeSceneId) sendVtsEvent("ItemEvent", itemEventData(item, "Removed"));
     return sceneWorkspace();
   });
   ipcMain.handle("delete-scene", async (_event, requestedId: unknown) => {
@@ -883,7 +1142,8 @@ app.whenReady().then(async () => {
     sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, false));
     return true;
   });
-  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadScenes()]);
+  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadScenes()]);
+  await backfillItemFilesFromScenes();
   await loadActiveSceneModel();
   startTrackingServer();
   startVtsApiServer();

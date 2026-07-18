@@ -29,7 +29,14 @@ function host(): VtsApiHost {
     live2DParameters: () => [{ name: "ParamAngleX", value: 12, min: -30, max: 30, defaultValue: 0 }],
     injectParameterData: async (parameters) => parameters.filter((parameter) => parameter.id === "Missing").map((parameter) => parameter.id),
     createCustomParameter: async (_name, _developer, parameter) => parameter.parameterName === "TakenParam" ? "owned-by-other" : "created",
-    deleteCustomParameter: async (_name, _developer, parameterName) => parameterName === "MyParam" ? "deleted" : "not-found"
+    deleteCustomParameter: async (_name, _developer, parameterName) => parameterName === "MyParam" ? "deleted" : "not-found",
+    listItems: () => ({
+      items: [{ fileName: "hat.png", instanceID: "item-1", order: 1, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: "Main", fromWorkshop: false }],
+      availableItemFiles: [{ fileName: "hat.png", type: "PNG", loadedCount: 1 }], availableSpots: [-1, 2]
+    }),
+    loadItem: async (_name, _developer, _sessionID, input) => input.fileName === "hat.png" ? { item: { fileName: "hat.png", instanceID: "item-2", order: input.order, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: "Main", fromWorkshop: false } } : { error: "not-found" },
+    unloadItems: async () => [{ fileName: "hat.png", instanceID: "item-1", order: 1, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: "Main", fromWorkshop: false }],
+    moveItems: async (inputs) => inputs.map((input) => ({ itemInstanceID: input.itemInstanceID, success: true, errorID: -1 }))
   };
 }
 
@@ -144,5 +151,17 @@ describe("VTube Studio API compatibility core", () => {
     expect(invalid.messageType).toBe("APIError");
     const deleted = await handleVtsApiRequest(request("ParameterDeletionRequest", { parameterName: "MyParam" }), session, host());
     expect(deleted.messageType).toBe("ParameterDeletionResponse");
+  });
+
+  it("lists, loads, moves, and unloads visual scene items", async () => {
+    const session: VtsApiSession = { authenticated: true, pluginName: "Test Plugin", pluginDeveloper: "LumaStage Tests" };
+    const listed = await handleVtsApiRequest(request("ItemListRequest", { includeAvailableSpots: true, includeItemInstancesInScene: true, includeAvailableItemFiles: true }), session, host());
+    expect((listed.data as { itemInstancesInScene: unknown[] }).itemInstancesInScene).toHaveLength(1);
+    const loaded = await handleVtsApiRequest(request("ItemLoadRequest", { fileName: "hat.png", positionX: 0.2, positionY: 0.1, size: 0.32, rotation: 10, order: 2 }), session, host());
+    expect(loaded.messageType).toBe("ItemLoadResponse");
+    const moved = await handleVtsApiRequest(request("ItemMoveRequest", { itemsToMove: [{ itemInstanceID: "item-2", positionX: -0.3, setFlip: true, flip: true }] }), session, host());
+    expect((moved.data as { movedItems: Array<{ success: boolean }> }).movedItems[0].success).toBe(true);
+    const unloaded = await handleVtsApiRequest(request("ItemUnloadRequest", { instanceIDs: ["item-1"], fileNames: [], allowUnloadingItemsLoadedByUserOrOtherPlugins: true }), session, host());
+    expect((unloaded.data as { unloadedItems: unknown[] }).unloadedItems).toHaveLength(1);
   });
 });

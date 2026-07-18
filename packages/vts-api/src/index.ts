@@ -11,6 +11,7 @@ const requestSchema = z.object({
 
 export interface VtsApiSession {
   authenticated: boolean;
+  sessionID?: string;
   pluginName?: string;
   pluginDeveloper?: string;
   subscriptions?: Map<VtsEventName, Record<string, unknown>>;
@@ -68,6 +69,52 @@ export interface VtsCustomParameterDefinition {
   defaultValue: number;
 }
 
+export interface VtsSceneItem {
+  fileName: string;
+  instanceID: string;
+  order: number;
+  type: "PNG" | "JPG" | "GIF" | "AnimationFolder" | "Live2D" | "Unknown";
+  censored: boolean;
+  flipped: boolean;
+  locked: boolean;
+  smoothing: number;
+  framerate: number;
+  frameCount: number;
+  currentFrame: number;
+  pinnedToModel: boolean;
+  pinnedModelID: string;
+  pinnedArtMeshID: string;
+  groupName: string;
+  sceneName: string;
+  fromWorkshop: boolean;
+}
+
+export interface VtsItemLoadInput {
+  fileName: string;
+  positionX: number;
+  positionY: number;
+  size: number;
+  rotation: number;
+  order: number;
+  failIfOrderTaken: boolean;
+  smoothing: number;
+  censored: boolean;
+  flipped: boolean;
+  locked: boolean;
+  unloadWhenPluginDisconnects: boolean;
+}
+
+export interface VtsItemMoveInput {
+  itemInstanceID: string;
+  positionX?: number;
+  positionY?: number;
+  size?: number;
+  rotation?: number;
+  order?: number;
+  setFlip: boolean;
+  flip: boolean;
+}
+
 export interface VtsApiHost {
   version: string;
   startedAt: number;
@@ -84,6 +131,10 @@ export interface VtsApiHost {
   injectParameterData(parameters: VtsInjectedParameter[], mode: "set" | "add", faceFound?: boolean): Promise<string[]>;
   createCustomParameter(pluginName: string, pluginDeveloper: string, parameter: VtsCustomParameterDefinition): Promise<"created" | "owned-by-other" | "limit">;
   deleteCustomParameter(pluginName: string, pluginDeveloper: string, parameterName: string): Promise<"deleted" | "not-found" | "owned-by-other">;
+  listItems(): { items: VtsSceneItem[]; availableItemFiles: Array<{ fileName: string; type: VtsSceneItem["type"]; loadedCount: number }>; availableSpots: number[] };
+  loadItem(pluginName: string, pluginDeveloper: string, sessionID: string, input: VtsItemLoadInput): Promise<{ item?: VtsSceneItem; error?: "not-found" | "limit" | "order" }>;
+  unloadItems(pluginName: string, pluginDeveloper: string, input: { unloadAllInScene: boolean; unloadAllLoadedByThisPlugin: boolean; allowOthers: boolean; instanceIDs: string[]; fileNames: string[] }): Promise<VtsSceneItem[]>;
+  moveItems(inputs: VtsItemMoveInput[]): Promise<Array<{ itemInstanceID: string; success: boolean; errorID: number }>>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -354,6 +405,71 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
     if (result === "not-found") return error(requestID, 411, "Custom parameter was not found");
     if (result === "owned-by-other") return error(requestID, 412, "Custom parameter belongs to another plugin");
     return response("ParameterDeletionResponse", requestID, { parameterName });
+  }
+
+  if (request.messageType === "ItemListRequest") {
+    const listed = host.listItems();
+    const onlyFileName = stringField(data, "onlyItemsWithFileName") ?? "";
+    const onlyInstanceID = stringField(data, "onlyItemsWithInstanceID") ?? "";
+    const filtered = listed.items.filter((item) => (!onlyFileName || item.fileName === onlyFileName) && (!onlyInstanceID || item.instanceID === onlyInstanceID));
+    return response("ItemListResponse", requestID, {
+      itemsInSceneCount: listed.items.length,
+      totalItemsAllowedCount: 60,
+      canLoadItemsRightNow: true,
+      availableSpots: data.includeAvailableSpots === true ? listed.availableSpots : [],
+      itemInstancesInScene: data.includeItemInstancesInScene === true ? filtered : [],
+      availableItemFiles: data.includeAvailableItemFiles === true ? listed.availableItemFiles : []
+    });
+  }
+
+  if (request.messageType === "ItemLoadRequest") {
+    const fileName = stringField(data, "fileName");
+    if (!fileName) return error(requestID, 1100, "Item filename is missing");
+    if (typeof data.customDataBase64 === "string" && data.customDataBase64.length > 0) return error(requestID, 1101, "Custom-data items require a separate permission and are not supported yet");
+    const number = (key: string, fallback: number) => data[key] === undefined ? fallback : data[key];
+    const positionX = number("positionX", 0), positionY = number("positionY", 0), size = number("size", 0.32), rotation = number("rotation", 0), order = number("order", 1), smoothing = number("smoothing", 0), fadeTime = number("fadeTime", 0);
+    if ([positionX, positionY, size, rotation, order, smoothing, fadeTime].some((value) => typeof value !== "number" || !Number.isFinite(value))) return error(requestID, 1102, "Item load values are invalid");
+    if (Math.abs(positionX as number) > 1000 || Math.abs(positionY as number) > 1000 || (size as number) < 0 || (size as number) > 1 || (smoothing as number) < 0 || (smoothing as number) > 1 || (fadeTime as number) < 0 || (fadeTime as number) > 2 || !Number.isInteger(order) || (order as number) < -30 || (order as number) > 30 || order === 0) return error(requestID, 1102, "Item load values are outside supported ranges");
+    const loaded = await host.loadItem(session.pluginName!, session.pluginDeveloper!, session.sessionID ?? "", {
+      fileName, positionX: positionX as number, positionY: positionY as number, size: size as number, rotation: rotation as number,
+      order: order as number, failIfOrderTaken: data.failIfOrderTaken === true, smoothing: smoothing as number,
+      censored: data.censored === true, flipped: data.flipped === true, locked: data.locked === true,
+      unloadWhenPluginDisconnects: data.unloadWhenPluginDisconnects === true
+    });
+    if (loaded.error === "not-found") return error(requestID, 1103, "Item file was not found");
+    if (loaded.error === "limit") return error(requestID, 1104, "Scene item limit reached");
+    if (loaded.error === "order") return error(requestID, 1105, "Requested item order is already taken");
+    return response("ItemLoadResponse", requestID, { instanceID: loaded.item!.instanceID, fileName: loaded.item!.fileName });
+  }
+
+  if (request.messageType === "ItemUnloadRequest") {
+    const instanceIDs = stringArray(data.instanceIDs);
+    const fileNames = stringArray(data.fileNames);
+    if (!instanceIDs || !fileNames) return error(requestID, 1110, "Item unload filters are invalid");
+    const unloaded = await host.unloadItems(session.pluginName!, session.pluginDeveloper!, {
+      unloadAllInScene: data.unloadAllInScene === true,
+      unloadAllLoadedByThisPlugin: data.unloadAllLoadedByThisPlugin === true,
+      allowOthers: data.allowUnloadingItemsLoadedByUserOrOtherPlugins === true,
+      instanceIDs, fileNames
+    });
+    return response("ItemUnloadResponse", requestID, { unloadedItems: unloaded.map((item) => ({ instanceID: item.instanceID, fileName: item.fileName })) });
+  }
+
+  if (request.messageType === "ItemMoveRequest") {
+    if (!Array.isArray(data.itemsToMove) || data.itemsToMove.length === 0) return error(requestID, 1120, "No items were provided to move");
+    const inputs: VtsItemMoveInput[] = [];
+    for (const rawItem of data.itemsToMove.slice(0, 64)) {
+      if (!rawItem || typeof rawItem !== "object") return error(requestID, 1121, "Item move entry is invalid");
+      const item = rawItem as Record<string, unknown>;
+      if (typeof item.itemInstanceID !== "string") return error(requestID, 1121, "Item instance ID is missing");
+      const optionalNumber = (key: string): number | undefined => typeof item[key] === "number" && Number.isFinite(item[key]) && (item[key] as number) > -1000 ? item[key] as number : undefined;
+      inputs.push({
+        itemInstanceID: item.itemInstanceID,
+        positionX: optionalNumber("positionX"), positionY: optionalNumber("positionY"), size: optionalNumber("size"), rotation: optionalNumber("rotation"),
+        order: optionalNumber("order"), setFlip: item.setFlip === true, flip: item.flip === true
+      });
+    }
+    return response("ItemMoveResponse", requestID, { movedItems: await host.moveItems(inputs) });
   }
 
   if (request.messageType === "ParameterValueRequest") {

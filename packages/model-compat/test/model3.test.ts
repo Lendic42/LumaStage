@@ -35,6 +35,23 @@ describe("Cubism model folder inspection", () => {
     await expect(inspectCubismModelFolder(root)).rejects.toThrow(/escapes/);
   });
 
+  it("finds a model inside a single downloaded package wrapper", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumastage-wrapper-"));
+    const modelRoot = join(root, "DownloadedAvatar");
+    await mkdir(modelRoot);
+    await mkdir(join(modelRoot, "textures"));
+    await writeFile(join(modelRoot, "avatar.moc3"), "test");
+    await writeFile(join(modelRoot, "textures", "00.png"), "test");
+    await writeFile(join(modelRoot, "avatar.model3.json"), JSON.stringify({
+      Version: 3,
+      FileReferences: { Moc: "avatar.moc3", Textures: ["textures/00.png"] }
+    }));
+
+    const model = await inspectCubismModelFolder(root);
+    expect(model.directory).toBe(modelRoot);
+    expect(model.name).toBe("avatar");
+  });
+
   it("imports VTube Studio parameter mappings and hotkeys without requiring undocumented fields", async () => {
     const root = await fixture({ Version: 3, FileReferences: { Moc: "avatar.moc3", Textures: ["textures/00.png"] } });
     await writeFile(join(root, "avatar.vtube.json"), JSON.stringify({
@@ -45,6 +62,9 @@ describe("Cubism model folder inspection", () => {
         Name: "Head X", Input: "FaceAngleX", InputRangeLower: -30, InputRangeUpper: 30,
         OutputRangeLower: -20, OutputRangeUpper: 20, ClampInput: true, ClampOutput: true,
         OutputLive2D: "CustomHeadX", Smoothing: 15, FutureField: "preserved by tolerant parser"
+      }, {
+        Name: "Auto Breath", Input: "", InputRangeLower: 0, InputRangeUpper: 1,
+        OutputRangeLower: 0, OutputRangeUpper: 1, OutputLive2D: "ParamBreath", UseBreathing: true
       }],
       Hotkeys: [{ HotkeyID: "smile", Name: "Smile", Action: "ToggleExpression", File: "smile.exp3.json" }],
       UnknownFutureSection: { enabled: true }
@@ -52,6 +72,7 @@ describe("Cubism model folder inspection", () => {
     const model = await inspectCubismModelFolder(root);
     expect(model.vTubeStudio?.name).toBe("Configured Avatar");
     expect(model.vTubeStudio?.parameterMappings[0]).toMatchObject({ input: "FaceAngleX", outputLive2D: "CustomHeadX" });
+    expect(model.vTubeStudio?.parameterMappings).toHaveLength(1);
     expect(model.vTubeStudio?.hotkeys[0]).toMatchObject({ action: "ToggleExpression", file: "smile.exp3.json" });
   });
 });

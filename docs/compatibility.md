@@ -34,7 +34,9 @@ This preserves honest open-source licensing while still building real compatibil
 | Input/Live2D parameter reads and timed parameter injection | Compatible subset | Implemented with set/add, weights and one-second expiry |
 | VTube Studio event subscriptions | Compatible subset | Implemented for test, model, tracking, background, movement, hotkey and item event types |
 | Custom tracking parameter creation/deletion | Compatible subset | Implemented with persistence, ownership, limits and revocation cleanup |
-| Remaining VTube Studio plugin API/items | Incremental compatibility | Planned |
+| PNG/JPG/GIF scene items and list/load/move/unload API | Compatible subset | Implemented with live canvas, persistent file catalog, ordering and disconnect cleanup |
+| Custom-data, animated-folder and Live2D item APIs | Incremental compatibility | Planned |
+| Remaining VTube Studio plugin API | Incremental compatibility | Planned |
 | Encrypted/locked models | Respect protection; no bypass | By design |
 
 ### VTube Studio sidecars
