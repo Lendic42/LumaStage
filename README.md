@@ -1,97 +1,89 @@
 # LumaStage
 
-LumaStage is a free and open-source VTuber studio built around two apps:
+**Открытая VTuber-студия: десктоп для Windows/macOS + трекер на iPhone с Face ID.**
 
-- **LumaStage Desktop** for Windows and macOS: model rendering, parameter mapping, scenes, hotkeys and OBS output.
-- **LumaStage Tracker** for Face ID iPhones: private, low-latency TrueDepth face tracking over the local network.
+`Electron` · `React` · `SwiftUI` · `ARKit` · `GPL-3.0`
 
-The project is under active development. The current milestone includes the complete ARKit-to-desktop tracking path, safe Cubism/VTube Studio model import, a Pixi WebGL renderer adapter, calibration/smoothing, persistent scenes and cross-platform packaging.
+LumaStage собирает на сцене Live2D-модели (Cubism 3/4/5 и папки из VTube Studio), а мимику снимает iPhone по локальной сети — без аккаунта, облака и подписки. Треккинг остаётся у тебя дома.
 
-## Principles
+| Часть | Что делает |
+| --- | --- |
+| **Desktop** | Рендер модели, маппинг параметров, сцены, хоткеи, оверлей под OBS |
+| **Tracker** | TrueDepth + ARKit на Face ID iPhone, низкая задержка, локальная сеть |
+| **Протокол** | Открытый TCP/Bonjour-протокол (`_lumastage._tcp`, порт `39510`) |
+| **VTS API** | Совместимость с Plugin API VTube Studio на `ws://127.0.0.1:8001` |
 
-- No account, cloud relay or subscription.
-- Tracking data stays on the local network.
-- Open protocol and open application source.
-- Import existing Cubism 3/4/5 `*.model3.json` model folders and preserve VTube Studio metadata where possible.
-- The proprietary Live2D Cubism Core is never represented as open-source code. See [compatibility and licensing](docs/compatibility.md).
+> Проприетарный Live2D Cubism Core в репозиторий не входит. Его можно поставить из приложения (официальный CDN Live2D) или из SDK for Web. Подробности — [docs/compatibility.md](docs/compatibility.md).
 
-## Repository
+## Скачать
 
-```text
-apps/desktop       Electron + React desktop application
-apps/ios           Native SwiftUI + ARKit tracker
-packages/protocol  Versioned tracking protocol and validation
-packages/vts-api   Tested VTube Studio Plugin API compatibility core
-packages/scene-core  Validated, versioned scene persistence
-docs               Architecture and compatibility notes
-```
+Готовые сборки — в [Releases](https://github.com/Lendic42/LumaStage/releases/latest).
 
-## Desktop development
+| Файл | Платформа |
+| --- | --- |
+| `LumaStage-macOS-0.1.0.dmg` | macOS (установщик) |
+| `LumaStage-macOS-0.1.0.zip` | macOS (portable) |
+| `LumaStage-Windows-0.1.0-Setup.exe` | Windows (установщик) |
+| `LumaStage-Windows-0.1.0-Portable.exe` | Windows (portable) |
+| `LumaStage-Tracker-0.1.0-unsigned.ipa` | iPhone (нужна своя подпись) |
+| `LumaStage-0.1.0-source.zip` | исходники релиза |
 
-Requires Node.js 22 or newer.
+### iPhone (Tracker)
+
+IPA **не подписан**. Ставь через Feather, AltStore, Sideloadly или TrollStore — своим сертификатом / своим устройством.
+
+1. Скачай `LumaStage-Tracker-0.1.0-unsigned.ipa` из релиза.
+2. Подпиши и установи на iPhone с Face ID.
+3. Запусти Desktop, открой пару по шестизначному коду с экрана.
+4. Держи оба устройства в одной Wi‑Fi сети.
+
+Первое подключение: код на десктопе → подтверждение на iPhone. После этого сохраняется локальный токен устройства.
+
+### Desktop
+
+1. Поставь macOS/Windows сборку из релиза.
+2. При первом импорте Live2D-модели приложение предложит скачать Cubism Core (нужно согласие с лицензией Live2D).
+3. Импортируй папку с `*.model3.json` (можно с `*.vtube.json` из VTube Studio).
+4. Подключи Tracker или работай в нейтральной позе без iPhone.
+
+## Что уже есть
+
+- Импорт Cubism 3/4/5 и метаданных VTube Studio (маппинги, expressions, motions, hotkeys)
+- Калибровка и сглаживание трекинга, живой редактор face → Live2D
+- Сцены: фон, трансформ модели, PNG/JPG/GIF items, pin к ArtMesh
+- Прозрачный always-on-top оверлей под захват в OBS
+- Локальный VTS Plugin API (модели, hotkeys, items, physics, post-processing и т.д.)
+- Без облака: pairing только по LAN, токены только на устройствах
+
+Полная матрица API и ограничения — в [docs/compatibility.md](docs/compatibility.md). Архитектура — [docs/architecture.md](docs/architecture.md).
+
+## Разработка
+
+Нужен Node.js 22+.
 
 ```bash
 npm install
-npm run dev
+npm run dev          # desktop
+npm test
+npm run package:mac  # dmg / zip
+npm run package:win  # setup / portable
 ```
 
-The desktop listens on TCP port `39510` and advertises `_lumastage._tcp` through Bonjour. The first iPhone connection requires the six-digit code displayed by the desktop; successful pairing creates a random per-device token stored locally on both devices. You can run it without an iPhone; the stage stays in its neutral pose.
+Структура:
 
-The desktop navigation separates the live **Stage**, persistent **Models** library, a full **Tracking** signal dashboard and **Settings**. Each page scrolls independently, so adding scenes, items or model controls cannot squeeze the main navigation out of the window. The layout is also validated down to a 760-pixel-wide desktop window.
-
-## Enable Cubism rendering
-
-LumaStage does not redistribute the proprietary Live2D Cubism Core. When Core is missing or incompatible, both the model panel and **Settings** show an automatic install/replace button. After explicit license confirmation, LumaStage downloads only the compatible Cubism 5 `live2dcubismcore.min.js` from Live2D's official `cubism.live2d.com` host, validates its renderer ABI and stores it in the application's private user-data directory. If the official download is unavailable, the same flow can open Live2D's SDK page or install the file from a previously downloaded **Cubism SDK for Web** package. The proprietary file is never committed to this repository.
-
-After that, import a folder containing one `*.model3.json`. LumaStage serves model assets through a sandboxed read-only protocol, renders physics/pose/expressions/motions through the Cubism adapter and applies either:
-
-- mappings from the matching `*.vtube.json`, including custom Live2D parameter IDs; or
-- standard Cubism parameter IDs when no VTube Studio setup exists.
-
-The importer rejects absolute/path-traversal asset references and reports missing files before rendering.
-
-The **Edit tracking mappings** dialog shows every imported face-input → Live2D-output route and its live value. You can edit input/output ranges, smoothing and clamping, add/remove mappings, or capture the natural minimum/maximum of a connected iPhone signal by moving that part of your face. Overrides are validated and stored per model; **Reset imported** restores the untouched `*.vtube.json` configuration.
-
-The stage toolbar includes a transparent always-on-top overlay for OBS/window capture. Imported VTube Studio expression and motion hotkeys are shown in the inspector with their original trigger keys. Standalone animations referenced only by `*.vtube.json` are loaded from the model's `motions/` folder through a runtime-only manifest view; actions that cannot be mapped safely are reported instead of guessed.
-
-Tracking uses a low-latency response profile for head, gaze, mouth and expression mappings. A procedural `ParamBreath` cycle plus subtle body/head sway keeps compatible models alive between face movements instead of freezing at neutral.
-
-## Scenes
-
-Desktop scene presets persist the selected model, background and model transform. A scene can use a built-in gradient, solid color or local PNG/JPEG/WebP/GIF image, plus scale, X/Y offset, rotation and mirroring. Background files are exposed to the sandboxed renderer through a read-only protocol scoped to the active file; arbitrary filesystem paths cannot be requested from the UI.
-
-Scenes also support visual PNG/JPG/GIF items. Items can render behind or in front of the model, and the inspector controls position, size, rotation, opacity, flip and lock state. The item file catalog persists independently from scene instances, so plugins can unload an item and load the same file later.
-
-## VTube Studio Plugin API compatibility
-
-LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`. Plugins must request access through the normal VTube Studio authentication messages; LumaStage shows a per-plugin approval dialog, stores only a token hash and provides a revoke button. The current tested subset includes:
-
-- `APIStateRequest`, `AuthenticationTokenRequest` and `AuthenticationRequest`;
-- `StatisticsRequest`, `CurrentModelRequest` and `FaceFoundRequest`;
-- `AvailableModelsRequest` and `ModelLoadRequest`, including unloading with an empty model ID. Imported models remain in a private persistent library even when no scene currently uses them.
-- `MoveModelRequest` with absolute/relative transforms, the official ranges and timed renderer interpolation;
-- `ArtMeshListRequest`, interactive `ArtMeshSelectionRequest` and `ColorTintRequest`, using drawable IDs reported by the loaded Cubism model, a searchable exact-count selection dialog, case-insensitive name/tag matchers and session cleanup;
-- `GetCurrentModelPhysicsRequest` and temporary, single-plugin `SetCurrentModelPhysicsRequest` base/group overrides with expiry and disconnect cleanup;
-- `HotkeysInCurrentModelRequest` and `HotkeyTriggerRequest` for imported expression/motion hotkeys;
-- `ExpressionStateRequest` and `ExpressionActivationRequest`, including expression parameter details parsed from `*.exp3.json`;
-- `InputParameterListRequest`, `ParameterValueRequest`, `Live2DParameterListRequest` and one-second `InjectParameterDataRequest` overrides with `set`/`add` modes and weights.
-- session-scoped `EventSubscriptionRequest` for test, model load, tracking status, background, model config/movement, hotkey and item events. LumaStage emits live tracking, scene, transform and API-hotkey events rather than requiring polling.
-- plugin-owned `ParameterCreationRequest`/`ParameterDeletionRequest`, with the official naming/range limits, per-plugin ownership, persistent storage and cleanup when plugin access is revoked.
-- visual `ItemListRequest`, `ItemLoadRequest`, `ItemMoveRequest`, `ItemUnloadRequest` and `ItemPinRequest`. Pins support official Provided/Center/Random modes and follow deformed ArtMesh triangles through barycentric coordinates; API changes update the live canvas and scene editor immediately, emit `ItemEvent`, and honor `unloadWhenPluginDisconnects`.
-- `ItemAnimationControlRequest` for real GIF frame decoding, FPS, frame seek, play/pause, auto-stop frames, brightness and opacity. Item order slots render on their actual side of the Live2D canvas.
-- `PostProcessingListRequest` and `PostProcessingUpdateRequest` for six real-time effect groups and 14 official config IDs. Plugins can filter/list effects, toggle VFX, load the Dreamy/Noir/Retro presets or update normalized config IDs with official clamping, fade times and error responses. The same persistent controls are available on the **Effects** screen.
-
-Unsupported request types return the official `APIError` shape instead of silently succeeding. See the compatibility matrix for the remaining API surface.
-
-## Build distributable desktop apps
-
-```bash
-npm run package:mac
-npm run package:win
+```text
+apps/desktop         Electron + React
+apps/ios             SwiftUI + ARKit tracker
+packages/protocol    протокол трекинга
+packages/vts-api     совместимость VTS Plugin API
+packages/scene-core  сцены
+packages/tracking-core
+packages/model-compat
+docs/
 ```
 
-Electron Builder can cross-package Windows x64 from macOS; the repository CI also builds on native Windows and macOS runners. Runtime validation should still be performed on each target OS before publishing a release.
+iOS-проект: `apps/ios`. Сборку IPA удобнее гонять на Mac с Xcode.
 
-## License
+## Лицензия
 
-LumaStage's original source code is licensed under GPL-3.0-only. Live2D Cubism Core, Live2D model assets and third-party models have their own licenses and are not covered by this repository's license. See `THIRD_PARTY_NOTICES.md` for bundled open-source libraries.
+Исходники LumaStage — **GPL-3.0-only**. Live2D Cubism Core, модели и чужие ассеты — по своим лицензиям, см. `THIRD_PARTY_NOTICES.md` и [docs/compatibility.md](docs/compatibility.md).
