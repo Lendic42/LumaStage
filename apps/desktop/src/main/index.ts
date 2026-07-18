@@ -1979,13 +1979,17 @@ app.whenReady().then(async () => {
   ipcMain.handle("push-virtual-camera-frame", (_event, payload: unknown) => {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
     const body = payload as { width?: unknown; height?: unknown; rgba?: unknown };
-    if (!Number.isInteger(body.width) || !Number.isInteger(body.height) || body.width! < 2 || body.height! < 2 || body.width! > 3840 || body.height! > 2160) return false;
+    const width = typeof body.width === "number" ? body.width : Number(body.width);
+    const height = typeof body.height === "number" ? body.height : Number(body.height);
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 2 || height < 2 || width > 3840 || height > 2160) return false;
     let rgba: Buffer | Uint8Array | ArrayBuffer;
     if (body.rgba instanceof ArrayBuffer) rgba = body.rgba;
-    else if (ArrayBuffer.isView(body.rgba)) rgba = body.rgba.buffer.slice(body.rgba.byteOffset, body.rgba.byteOffset + body.rgba.byteLength);
-    else if (Buffer.isBuffer(body.rgba)) rgba = body.rgba;
+    else if (ArrayBuffer.isView(body.rgba)) {
+      const view = body.rgba as ArrayBufferView;
+      rgba = Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+    } else if (Buffer.isBuffer(body.rgba)) rgba = body.rgba;
     else return false;
-    return pushVirtualCameraFrame({ width: body.width as number, height: body.height as number, rgba });
+    return pushVirtualCameraFrame({ width, height, rgba });
   });
   ipcMain.handle("forget-trusted-devices", async () => {
     trustedDevices.clear();
