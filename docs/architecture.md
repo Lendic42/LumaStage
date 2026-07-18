@@ -26,6 +26,8 @@ Visual scene items use the same boundary: absolute item paths remain in main-pro
 
 User-tuned tracking mappings are stored separately from model assets. The main process validates bounded finite mapping records, keys each override by the SHA-256 digest of the resolved model directory and serializes updates through a write queue. The renderer receives only the active mapping list; resetting removes the override and reuses the original parsed `*.vtube.json` mappings without modifying the model folder.
 
+Imported model directories also live in a private main-process library independent of scenes. `AvailableModelsRequest` reads validated metadata from that library, while `ModelLoadRequest` attaches the selected model to the active scene (or clears it for an empty ID), broadcasts the new workspace and emits model events. Expression state remains in main and activation is forwarded to the renderer through a narrow typed IPC event.
+
 The renderer boundary is an adapter rather than a direct dependency on one model engine:
 
 - `CubismRenderer`: existing `.moc3`/`.model3.json` models through an installed Cubism Core.

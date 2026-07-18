@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsExpressionActivation, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -27,6 +27,11 @@ const bridge: LumaStageBridge = {
     const handler = (_event: Electron.IpcRendererEvent, injection: VtsParameterInjection) => listener(injection);
     ipcRenderer.on("vts-parameter-injection", handler);
     return () => ipcRenderer.removeListener("vts-parameter-injection", handler);
+  },
+  onVtsExpressionActivation(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, activation: VtsExpressionActivation) => listener(activation);
+    ipcRenderer.on("vts-expression-activation", handler);
+    return () => ipcRenderer.removeListener("vts-expression-activation", handler);
   },
   onSceneWorkspaceChanged(listener) {
     const handler = (_event: Electron.IpcRendererEvent, workspace: SceneWorkspace) => listener(workspace);

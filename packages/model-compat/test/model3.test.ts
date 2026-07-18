@@ -30,6 +30,18 @@ describe("Cubism model folder inspection", () => {
     expect(model.missingFiles).toEqual([]);
   });
 
+  it("reads expression parameter details for API compatibility", async () => {
+    const root = await fixture({
+      Version: 3,
+      FileReferences: { Moc: "avatar.moc3", Textures: ["textures/00.png"], Expressions: [{ Name: "Smile", File: "smile.exp3.json" }] }
+    });
+    await writeFile(join(root, "smile.exp3.json"), JSON.stringify({
+      Type: "Live2D Expression", Parameters: [{ Id: "ParamMouthForm", Value: 1, Blend: "Add" }]
+    }));
+    const model = await inspectCubismModelFolder(root);
+    expect(model.expressions[0].parameters).toEqual([{ name: "ParamMouthForm", value: 1 }]);
+  });
+
   it("rejects asset paths that escape the model folder", async () => {
     const root = await fixture({ Version: 3, FileReferences: { Moc: "../secret.moc3", Textures: [] } });
     await expect(inspectCubismModelFolder(root)).rejects.toThrow(/escapes/);

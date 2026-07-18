@@ -9,6 +9,9 @@ const VTUBE_SETUP_SUFFIX = ".vtube" + ".json";
 const referencedFile = z.string().min(1).max(1024);
 const namedReference = z.object({ Name: z.string().min(1), File: referencedFile }).passthrough();
 const motionReference = z.object({ File: referencedFile }).passthrough();
+const expression3Schema = z.object({
+  Parameters: z.array(z.object({ Id: z.string().min(1).max(256), Value: z.number().finite() }).passthrough()).default([])
+}).passthrough();
 
 export const model3Schema = z.object({
   Version: z.number().int().min(3),
@@ -130,7 +133,7 @@ export interface CubismModelSummary {
   posePath?: string;
   displayInfoPath?: string;
   userDataPath?: string;
-  expressions: Array<{ name: string; path: string }>;
+  expressions: Array<{ name: string; path: string; parameters: Array<{ name: string; value: number }> }>;
   motionGroups: Record<string, string[]>;
   eyeBlinkParameters: string[];
   lipSyncParameters: string[];
@@ -187,7 +190,15 @@ export async function inspectCubismModelFolder(directory: string): Promise<Cubis
   const refs = model.FileReferences;
   const mocPath = safeAssetPath(root, refs.Moc);
   const texturePaths = refs.Textures.map((path) => safeAssetPath(root, path));
-  const expressions = refs.Expressions.map((item) => ({ name: item.Name, path: safeAssetPath(root, item.File) }));
+  const expressions = await Promise.all(refs.Expressions.map(async (item) => {
+    const path = safeAssetPath(root, item.File);
+    try {
+      const expression = expression3Schema.parse(JSON.parse(await readFile(path, "utf8")));
+      return { name: item.Name, path, parameters: expression.Parameters.map((parameter) => ({ name: parameter.Id, value: parameter.Value })) };
+    } catch {
+      return { name: item.Name, path, parameters: [] };
+    }
+  }));
   const motionGroups = Object.fromEntries(Object.entries(refs.Motions).map(([group, motions]) => [group, motions.map((motion) => safeAssetPath(root, motion.File))]));
   const optional = (path?: string) => path ? safeAssetPath(root, path) : undefined;
   const allPaths = [mocPath, ...texturePaths, ...expressions.map((item) => item.path), ...Object.values(motionGroups).flat(), optional(refs.Physics), optional(refs.Pose), optional(refs.DisplayInfo), optional(refs.UserData)].filter((path): path is string => Boolean(path));

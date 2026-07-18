@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { TrackingFrame } from "@lumastage/protocol";
 import { mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge";
+import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsExpressionActivation, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge";
 import type { CubismCoreStatus } from "../shared/bridge";
 import { Live2DStage } from "./components/Live2DStage";
 import "./style.css";
@@ -138,6 +138,7 @@ function App() {
   const [hotkeyRequest, setHotkeyRequest] = useState<{ nonce: number; hotkey: ImportedHotkey } | null>(null);
   const [pluginRequests, setPluginRequests] = useState<PluginAuthorizationRequest[]>([]);
   const [parameterInjection, setParameterInjection] = useState<{ nonce: number; value: VtsParameterInjection } | null>(null);
+  const [expressionRequest, setExpressionRequest] = useState<{ nonce: number; value: VtsExpressionActivation } | null>(null);
   const [sceneLibrary, setSceneLibrary] = useState<SceneLibrary | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [mappingEditorOpen, setMappingEditorOpen] = useState(false);
@@ -148,10 +149,11 @@ function App() {
     const offPluginRequest = window.lumastage.onPluginAuthorizationRequest((request) => setPluginRequests((items) => [...items, request]));
     const offVtsHotkey = window.lumastage.onVtsHotkeyTrigger((hotkey) => setHotkeyRequest({ nonce: Date.now(), hotkey }));
     const offParameterInjection = window.lumastage.onVtsParameterInjection((value) => setParameterInjection({ nonce: Date.now(), value }));
+    const offExpressionActivation = window.lumastage.onVtsExpressionActivation((value) => setExpressionRequest({ nonce: Date.now(), value }));
     const offSceneWorkspace = window.lumastage.onSceneWorkspaceChanged((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); });
     void window.lumastage.getCubismCoreStatus().then(setCoreStatus);
     void window.lumastage.getSceneWorkspace().then((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); offSceneWorkspace(); };
+    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); offExpressionActivation(); offSceneWorkspace(); };
   }, []);
 
   useEffect(() => {
@@ -259,7 +261,7 @@ function App() {
       <div className="stage-grid">
         <section className="stage-card">
           <div className="stage-toolbar"><span>{activeScene?.name ?? "Main Stage"} · {model?.name ?? "Preview avatar"}</span><div><button onClick={() => void updateActiveScene({ transform: neutralSceneTransform })}>⌖ Fit</button><button onClick={() => void toggleOverlay()}>{overlayMode ? "Exit overlay" : "▣ Transparent"}</button></div></div>
-          <div className="stage" style={stageStyle}><div className="grid" />{activeScene?.items.map((item) => <img key={item.id} className={`scene-item${selectedItemId === item.id && !overlayMode ? " selected" : ""}${item.locked ? " locked" : ""}`} src={`${item.imageUrl}?item=${item.id}`} alt={item.fileName} draggable={false} onPointerDown={(event) => startItemDrag(event, item)} style={{ left: `${(item.positionX + 1) * 50}%`, top: `${(1 - item.positionY) * 50}%`, width: `${item.size * 100}%`, opacity: item.opacity, zIndex: item.order > 0 ? 4 : 1, transform: `translate(-50%, -50%) rotate(${item.rotation}deg) scaleX(${item.flipped ? -1 : 1})`, pointerEvents: overlayMode ? "none" : "auto" }} />)}{!rendererReady && <AvatarPreview frame={frame} />}<Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} parameterInjection={parameterInjection} sceneTransform={activeScene?.transform ?? neutralSceneTransform} onReady={setRendererReady} onError={setRendererError} /><div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div>{overlayMode && <button className="exit-overlay" onClick={() => void toggleOverlay(false)}>Exit overlay · Esc</button>}</div>
+          <div className="stage" style={stageStyle}><div className="grid" />{activeScene?.items.map((item) => <img key={item.id} className={`scene-item${selectedItemId === item.id && !overlayMode ? " selected" : ""}${item.locked ? " locked" : ""}`} src={`${item.imageUrl}?item=${item.id}`} alt={item.fileName} draggable={false} onPointerDown={(event) => startItemDrag(event, item)} style={{ left: `${(item.positionX + 1) * 50}%`, top: `${(1 - item.positionY) * 50}%`, width: `${item.size * 100}%`, opacity: item.opacity, zIndex: item.order > 0 ? 4 : 1, transform: `translate(-50%, -50%) rotate(${item.rotation}deg) scaleX(${item.flipped ? -1 : 1})`, pointerEvents: overlayMode ? "none" : "auto" }} />)}{!rendererReady && <AvatarPreview frame={frame} />}<Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} parameterInjection={parameterInjection} expressionRequest={expressionRequest} sceneTransform={activeScene?.transform ?? neutralSceneTransform} onReady={setRendererReady} onError={setRendererError} /><div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div>{overlayMode && <button className="exit-overlay" onClick={() => void toggleOverlay(false)}>Exit overlay · Esc</button>}</div>
         </section>
 
         <aside className="inspector">

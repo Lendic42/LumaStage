@@ -46,6 +46,21 @@ export interface VtsCurrentModel {
   hotkeys: VtsHotkey[];
 }
 
+export interface VtsAvailableModel {
+  modelName: string;
+  modelID: string;
+  vtsModelName: string;
+  vtsModelIconName: string;
+}
+
+export interface VtsExpressionState {
+  name: string;
+  file: string;
+  active: boolean;
+  usedInHotkeys: Array<{ name: string; id: string }>;
+  parameters: Array<{ name: string; value: number }>;
+}
+
 export interface VtsParameter {
   name: string;
   addedBy?: string;
@@ -123,9 +138,13 @@ export interface VtsApiHost {
   requestToken(pluginName: string, pluginDeveloper: string, pluginIcon?: string): Promise<string | undefined>;
   authenticate(pluginName: string, pluginDeveloper: string, token: string): Promise<boolean>;
   currentModel(): VtsCurrentModel | undefined;
+  availableModels(): Promise<VtsAvailableModel[]>;
+  loadModel(modelID: string): Promise<"loaded" | "unloaded" | "not-found">;
   modelPosition(): { positionX: number; positionY: number; rotation: number; size: number };
   faceFound(): boolean;
   triggerHotkey(hotkeyIDOrName: string): Promise<string | undefined>;
+  expressionStates(): VtsExpressionState[];
+  activateExpression(expressionFile: string, active: boolean, fadeTime: number): Promise<boolean>;
   inputParameters(): { defaultParameters: VtsParameter[]; customParameters: VtsParameter[] };
   live2DParameters(): VtsParameter[];
   injectParameterData(parameters: VtsInjectedParameter[], mode: "set" | "add", faceFound?: boolean): Promise<string[]>;
@@ -336,6 +355,23 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
     });
   }
 
+  if (request.messageType === "AvailableModelsRequest") {
+    const models = await host.availableModels();
+    return response("AvailableModelsResponse", requestID, {
+      numberOfModels: models.length,
+      availableModels: models.map((available) => ({ ...available, modelLoaded: available.modelID === model?.modelID }))
+    });
+  }
+
+  if (request.messageType === "ModelLoadRequest") {
+    const modelID = stringField(data, "modelID");
+    if (modelID === undefined || modelID.length > 256) return error(requestID, 150, "Model ID is missing or invalid");
+    const loaded = await host.loadModel(modelID);
+    return loaded === "not-found"
+      ? error(requestID, 151, "Model ID was not found")
+      : response("ModelLoadResponse", requestID, { modelID });
+  }
+
   if (request.messageType === "HotkeysInCurrentModelRequest") {
     return response("HotkeysInCurrentModelResponse", requestID, {
       modelLoaded: Boolean(model),
@@ -361,6 +397,34 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
     return triggeredID
       ? response("HotkeyTriggerResponse", requestID, { hotkeyID: triggeredID })
       : error(requestID, 202, "Hotkey ID or name was not found in the model");
+  }
+
+  if (request.messageType === "ExpressionStateRequest") {
+    const expressionFile = stringField(data, "expressionFile") ?? "";
+    if (expressionFile && (!expressionFile.toLowerCase().endsWith(".exp3.json") || expressionFile.length > 256)) return error(requestID, 300, "Expression filename is invalid");
+    const states = host.expressionStates();
+    const selected = expressionFile ? states.filter((expression) => expression.file === expressionFile) : states;
+    if (expressionFile && selected.length === 0) return error(requestID, 301, "Expression was not found in the current model");
+    const details = data.details === true;
+    return response("ExpressionStateResponse", requestID, {
+      modelLoaded: Boolean(model), modelName: model?.modelName ?? "", modelID: model?.modelID ?? "",
+      expressions: selected.map((expression) => ({
+        name: expression.name, file: expression.file, active: expression.active,
+        deactivateWhenKeyIsLetGo: false, autoDeactivateAfterSeconds: false, secondsRemaining: 0,
+        usedInHotkeys: details ? expression.usedInHotkeys : [], parameters: details ? expression.parameters : []
+      }))
+    });
+  }
+
+  if (request.messageType === "ExpressionActivationRequest") {
+    if (!model) return error(requestID, 302, "No model is currently loaded");
+    const expressionFile = stringField(data, "expressionFile");
+    if (!expressionFile || !expressionFile.toLowerCase().endsWith(".exp3.json") || expressionFile.length > 256) return error(requestID, 300, "Expression filename is invalid");
+    if (typeof data.active !== "boolean") return error(requestID, 303, "Expression active field must be a boolean");
+    const requestedFadeTime = data.fadeTime === undefined ? 0.25 : data.fadeTime;
+    if (typeof requestedFadeTime !== "number" || !Number.isFinite(requestedFadeTime)) return error(requestID, 304, "Expression fade time is invalid");
+    const activated = await host.activateExpression(expressionFile, data.active, Math.max(0, Math.min(2, requestedFadeTime)));
+    return activated ? response("ExpressionActivationResponse", requestID, {}) : error(requestID, 301, "Expression was not found in the current model");
   }
 
   if (request.messageType === "FaceFoundRequest") {

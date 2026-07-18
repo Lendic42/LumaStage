@@ -3,7 +3,7 @@ import { Application } from "pixi.js";
 import type { Live2DModel as Live2DModelType, Cubism4InternalModel } from "pixi-live2d-display/cubism4";
 import { TrackingEngine } from "@lumastage/tracking-core";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { ImportedHotkey, ImportedModel, SceneTransform, VtsParameterInjection } from "../../shared/bridge";
+import type { ImportedHotkey, ImportedModel, SceneTransform, VtsExpressionActivation, VtsParameterInjection } from "../../shared/bridge";
 
 interface Props {
   model: ImportedModel | null;
@@ -11,6 +11,7 @@ interface Props {
   calibrationNonce: number;
   hotkeyRequest: { nonce: number; hotkey: ImportedHotkey } | null;
   parameterInjection: { nonce: number; value: VtsParameterInjection } | null;
+  expressionRequest: { nonce: number; value: VtsExpressionActivation } | null;
   sceneTransform: SceneTransform;
   onReady(ready: boolean): void;
   onError(message: string | null): void;
@@ -39,11 +40,12 @@ function loadCubismCore(): Promise<void> {
   return loading;
 }
 
-export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, sceneTransform, onReady, onError }: Props) {
+export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, expressionRequest, sceneTransform, onReady, onError }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef(new TrackingEngine());
   const hotkeyHandlerRef = useRef<((hotkey: ImportedHotkey) => Promise<void>) | null>(null);
+  const expressionHandlerRef = useRef<((activation: VtsExpressionActivation) => Promise<void>) | null>(null);
   const sceneTransformRef = useRef(sceneTransform);
   const fitHandlerRef = useRef<(() => void) | null>(null);
 
@@ -79,6 +81,15 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
     if (!parameterInjection) return;
     engineRef.current.injectVTubeParameters(parameterInjection.value.parameters, parameterInjection.value.mode);
   }, [parameterInjection]);
+
+  useEffect(() => {
+    if (!expressionRequest) return;
+    if (!expressionHandlerRef.current) {
+      onError("Model renderer is not ready for expressions");
+      return;
+    }
+    void expressionHandlerRef.current(expressionRequest.value).catch((reason) => onError(reason instanceof Error ? reason.message : String(reason)));
+  }, [expressionRequest, onError]);
 
   useEffect(() => {
     if (!imported || !canvasRef.current || !containerRef.current) {
@@ -171,6 +182,18 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
         }
         throw new Error(`VTube Studio hotkey action “${hotkey.action}” is not supported yet`);
       };
+      expressionHandlerRef.current = async (activation) => {
+        if (!liveModel) throw new Error("Model renderer is not ready");
+        const requested = activation.file.replaceAll("\\", "/").split("/").pop()?.toLowerCase();
+        const expression = imported.expressions.find((item) => item.file.replaceAll("\\", "/").split("/").pop()?.toLowerCase() === requested);
+        if (!expression) throw new Error(`Expression “${activation.file}” was not found`);
+        if (activation.active) {
+          await liveModel.expression(expression.name);
+        } else {
+          const internal = liveModel.internalModel as Cubism4InternalModel & { motionManager: { expressionManager?: { resetExpression(): void } } };
+          internal.motionManager.expressionManager?.resetExpression();
+        }
+      };
       resizeObserver = new ResizeObserver(fit);
       resizeObserver.observe(containerRef.current);
       fit();
@@ -187,6 +210,7 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
     return () => {
       disposed = true;
       hotkeyHandlerRef.current = null;
+      expressionHandlerRef.current = null;
       fitHandlerRef.current = null;
       resizeObserver?.disconnect();
       if (liveModel && !liveModel.destroyed) liveModel.destroy({ children: true, texture: true, baseTexture: true });

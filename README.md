@@ -64,7 +64,9 @@ LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`
 
 - `APIStateRequest`, `AuthenticationTokenRequest` and `AuthenticationRequest`;
 - `StatisticsRequest`, `CurrentModelRequest` and `FaceFoundRequest`;
+- `AvailableModelsRequest` and `ModelLoadRequest`, including unloading with an empty model ID. Imported models remain in a private persistent library even when no scene currently uses them.
 - `HotkeysInCurrentModelRequest` and `HotkeyTriggerRequest` for imported expression/motion hotkeys;
+- `ExpressionStateRequest` and `ExpressionActivationRequest`, including expression parameter details parsed from `*.exp3.json`;
 - `InputParameterListRequest`, `ParameterValueRequest`, `Live2DParameterListRequest` and one-second `InjectParameterDataRequest` overrides with `set`/`add` modes and weights.
 - session-scoped `EventSubscriptionRequest` for test, model load, tracking status, background, model config/movement, hotkey and item events. LumaStage emits live tracking, scene, transform and API-hotkey events rather than requiring polling.
 - plugin-owned `ParameterCreationRequest`/`ParameterDeletionRequest`, with the official naming/range limits, per-plugin ownership, persistent storage and cleanup when plugin access is revoked.

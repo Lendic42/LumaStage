@@ -19,9 +19,13 @@ function host(): VtsApiHost {
       numberOfTextures: 2, textureResolution: 0,
       hotkeys: [{ name: "Smile", type: "ToggleExpression", file: "smile.exp3.json", hotkeyID: "smile" }]
     }),
+    availableModels: async () => [{ modelName: "Haru", modelID: "haru", vtsModelName: "Haru.vtube.json", vtsModelIconName: "" }],
+    loadModel: async (modelID) => modelID === "haru" ? "loaded" : modelID === "" ? "unloaded" : "not-found",
     modelPosition: () => ({ positionX: 0.1, positionY: -0.2, rotation: 12, size: 5 }),
     faceFound: () => true,
     triggerHotkey: async (id) => id.toLowerCase() === "smile" ? "smile" : undefined,
+    expressionStates: () => [{ name: "smile", file: "smile.exp3.json", active: false, usedInHotkeys: [{ name: "Smile", id: "smile" }], parameters: [{ name: "ParamMouthForm", value: 1 }] }],
+    activateExpression: async (file) => file === "smile.exp3.json",
     inputParameters: () => ({
       defaultParameters: [{ name: "FaceAngleX", addedBy: "VTube Studio", value: 12, min: -30, max: 30, defaultValue: 0 }],
       customParameters: []
@@ -69,6 +73,25 @@ describe("VTube Studio API compatibility core", () => {
     expect((list.data as { availableHotkeys: unknown[] }).availableHotkeys).toHaveLength(1);
     const trigger = await handleVtsApiRequest(request("HotkeyTriggerRequest", { hotkeyID: "SMILE" }), session, host());
     expect(trigger.messageType).toBe("HotkeyTriggerResponse");
+  });
+
+  it("lists, loads, and unloads available models", async () => {
+    const session: VtsApiSession = { authenticated: true };
+    const listed = await handleVtsApiRequest(request("AvailableModelsRequest"), session, host());
+    expect((listed.data as { availableModels: Array<{ modelLoaded: boolean }> }).availableModels[0].modelLoaded).toBe(true);
+    expect((await handleVtsApiRequest(request("ModelLoadRequest", { modelID: "haru" }), session, host())).messageType).toBe("ModelLoadResponse");
+    expect((await handleVtsApiRequest(request("ModelLoadRequest", { modelID: "missing" }), session, host())).messageType).toBe("APIError");
+    expect((await handleVtsApiRequest(request("ModelLoadRequest", { modelID: "" }), session, host())).messageType).toBe("ModelLoadResponse");
+  });
+
+  it("reports and activates expressions with optional details", async () => {
+    const session: VtsApiSession = { authenticated: true };
+    const listed = await handleVtsApiRequest(request("ExpressionStateRequest", { details: true }), session, host());
+    expect((listed.data as { expressions: Array<{ parameters: unknown[] }> }).expressions[0].parameters).toHaveLength(1);
+    const activated = await handleVtsApiRequest(request("ExpressionActivationRequest", { expressionFile: "smile.exp3.json", active: true, fadeTime: 5 }), session, host());
+    expect(activated.messageType).toBe("ExpressionActivationResponse");
+    const invalid = await handleVtsApiRequest(request("ExpressionActivationRequest", { expressionFile: "missing.exp3.json", active: true }), session, host());
+    expect(invalid.messageType).toBe("APIError");
   });
 
   it("reports the tracker face state", async () => {

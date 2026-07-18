@@ -21,7 +21,7 @@ export interface ImportedModel {
   textureCount: number;
   expressionCount: number;
   motionCount: number;
-  expressions: Array<{ name: string; file: string }>;
+  expressions: Array<{ name: string; file: string; parameters: Array<{ name: string; value: number }> }>;
   motionGroups: Record<string, string[]>;
   missingFiles: string[];
   manifestUrl: string;
@@ -121,6 +121,12 @@ export interface VtsParameterInjection {
   faceFound?: boolean;
 }
 
+export interface VtsExpressionActivation {
+  file: string;
+  active: boolean;
+  fadeTime: number;
+}
+
 export interface DesktopStatus {
   port: number;
   connectedDevices: number;
@@ -137,6 +143,7 @@ export interface LumaStageBridge {
   onPluginAuthorizationRequest(listener: (request: PluginAuthorizationRequest) => void): () => void;
   onVtsHotkeyTrigger(listener: (hotkey: ImportedHotkey) => void): () => void;
   onVtsParameterInjection(listener: (injection: VtsParameterInjection) => void): () => void;
+  onVtsExpressionActivation(listener: (activation: VtsExpressionActivation) => void): () => void;
   onSceneWorkspaceChanged(listener: (workspace: SceneWorkspace) => void): () => void;
   importModel(): Promise<ImportedModel | null>;
   updateModelMappings(mappings: VTubeParameterMapping[]): Promise<ImportedModel>;

@@ -31,12 +31,14 @@ This preserves honest open-source licensing while still building real compatibil
 | LumaStage scene presets | Native equivalent | Implemented with model binding, backgrounds and transforms |
 | VTube Studio plugin authentication/state/statistics | Compatible subset | Implemented and packaged-runtime tested on localhost:8001 |
 | Current model, face-found and model hotkey API | Compatible subset | Implemented; hotkeys limited to supported imported actions |
+| Available model list and model load/unload API | Compatible subset | Implemented with persistent private model library and scene update |
+| Expression state and activation API | Compatible subset | Implemented with parsed expression parameter details and renderer activation |
 | Input/Live2D parameter reads and timed parameter injection | Compatible subset | Implemented with set/add, weights and one-second expiry |
 | VTube Studio event subscriptions | Compatible subset | Implemented for test, model, tracking, background, movement, hotkey and item event types |
 | Custom tracking parameter creation/deletion | Compatible subset | Implemented with persistence, ownership, limits and revocation cleanup |
 | PNG/JPG/GIF scene items and list/load/move/unload API | Compatible subset | Implemented with live canvas, persistent file catalog, ordering and disconnect cleanup |
 | Custom-data, animated-folder and Live2D item APIs | Incremental compatibility | Planned |
-| Remaining VTube Studio plugin API | Incremental compatibility | Planned |
+| Remaining VTube Studio plugin API | Incremental compatibility | Model/artmesh, tint, physics and advanced item requests planned |
 | Encrypted/locked models | Respect protection; no bypass | By design |
 
 ### VTube Studio sidecars

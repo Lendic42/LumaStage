@@ -38,9 +38,12 @@ let bonjour: Bonjour | undefined;
 let activeModelRoot: string | undefined;
 let activeApiModel: VtsCurrentModel | undefined;
 let activeImportedModel: ImportedModel | undefined;
+const activeExpressionFiles = new Set<string>();
 let activeDefaultMappings: VTubeParameterMapping[] = [];
 const modelMappingOverrides = new Map<string, VTubeParameterMapping[]>();
 let modelMappingSaveQueue: Promise<void> = Promise.resolve();
+const modelDirectories = new Set<string>();
+let modelDirectorySaveQueue: Promise<void> = Promise.resolve();
 let sceneLibrary: StoredSceneLibrary = createDefaultSceneLibrary(randomUUID());
 let activeBackgroundPath: string | undefined;
 let sceneSaveQueue: Promise<void> = Promise.resolve();
@@ -80,6 +83,34 @@ function itemFilesPath(): string {
 
 function modelMappingsPath(): string {
   return join(app.getPath("userData"), "model-mappings.json");
+}
+
+function modelDirectoriesPath(): string {
+  return join(app.getPath("userData"), "models.json");
+}
+
+function saveModelDirectories(): Promise<void> {
+  const payload = `${JSON.stringify([...modelDirectories], null, 2)}\n`;
+  const operation = modelDirectorySaveQueue.catch(() => undefined).then(async () => {
+    await mkdir(app.getPath("userData"), { recursive: true });
+    await writeFile(modelDirectoriesPath(), payload, { encoding: "utf8", mode: 0o600 });
+  });
+  modelDirectorySaveQueue = operation;
+  return operation;
+}
+
+async function loadModelDirectories(): Promise<void> {
+  try {
+    const parsed = JSON.parse(await readFile(modelDirectoriesPath(), "utf8")) as unknown;
+    if (Array.isArray(parsed)) for (const directory of parsed) if (typeof directory === "string" && directory.length <= 4096) modelDirectories.add(directory);
+  } catch {
+    // First launch or invalid model library.
+  }
+}
+
+async function backfillModelDirectoriesFromScenes(): Promise<void> {
+  for (const scene of sceneLibrary.scenes) if (scene.modelDirectory) modelDirectories.add(scene.modelDirectory);
+  await saveModelDirectories();
 }
 
 function modelMappingKey(directory: string): string {
@@ -246,6 +277,7 @@ function clearActiveModel(): void {
   activeApiModel = undefined;
   activeImportedModel = undefined;
   activeDefaultMappings = [];
+  activeExpressionFiles.clear();
 }
 
 async function loadActiveSceneModel(): Promise<ImportedModel | null> {
@@ -693,6 +725,56 @@ function currentModelEventData(modelLoaded = Boolean(activeApiModel)): Record<st
   return { modelLoaded, modelName: activeApiModel?.modelName ?? "", modelID: activeApiModel?.modelID ?? "" };
 }
 
+async function availableVtsModels(): Promise<Array<{ modelName: string; modelID: string; vtsModelName: string; vtsModelIconName: string }>> {
+  const available = new Map<string, { modelName: string; modelID: string; vtsModelName: string; vtsModelIconName: string }>();
+  for (const directory of modelDirectories) {
+    try {
+      const model = await inspectCubismModelFolder(directory);
+      const modelID = model.vTubeStudio?.modelId ?? model.name;
+      if (!available.has(modelID)) available.set(modelID, {
+        modelName: model.vTubeStudio?.name ?? model.name,
+        modelID,
+        vtsModelName: model.vTubeStudio ? basename(model.vTubeStudio.path) : "",
+        vtsModelIconName: model.vTubeStudio?.iconPath ? basename(model.vTubeStudio.iconPath) : ""
+      });
+    } catch {
+      // Missing scene models are omitted from the available model catalog.
+    }
+  }
+  return [...available.values()];
+}
+
+async function loadVtsModel(modelID: string): Promise<"loaded" | "unloaded" | "not-found"> {
+  const previous = activeApiModel;
+  const scene = storedActiveScene();
+  if (!modelID) {
+    delete scene.modelDirectory;
+    delete scene.modelName;
+    clearActiveModel();
+    await saveScenes();
+    broadcastSceneWorkspace();
+    if (previous) sendVtsEvent("ModelLoadedEvent", { modelLoaded: false, modelName: previous.modelName, modelID: previous.modelID });
+    return "unloaded";
+  }
+  for (const directory of modelDirectories) {
+    try {
+      const inspected = await inspectCubismModelFolder(directory);
+      if ((inspected.vTubeStudio?.modelId ?? inspected.name) !== modelID) continue;
+      const imported = await inspectModelDirectory(inspected.directory);
+      scene.modelDirectory = imported.directory;
+      scene.modelName = imported.vTubeModelName ?? imported.name;
+      await saveScenes();
+      broadcastSceneWorkspace();
+      if (previous && previous.modelID !== activeApiModel?.modelID) sendVtsEvent("ModelLoadedEvent", { modelLoaded: false, modelName: previous.modelName, modelID: previous.modelID });
+      sendVtsEvent("ModelLoadedEvent", currentModelEventData(true));
+      return "loaded";
+    } catch {
+      // Keep searching other catalog entries.
+    }
+  }
+  return "not-found";
+}
+
 function hotkeyEventData(hotkey: { hotkeyID: string; name: string; type: string; file: string }, triggeredByAPI: boolean): Record<string, unknown> {
   return {
     hotkeyID: hotkey.hotkeyID, hotkeyName: hotkey.name, hotkeyAction: hotkey.type, hotkeyFile: hotkey.file,
@@ -782,6 +864,8 @@ function startVtsApiServer(): void {
       return Boolean(storedHash && hashesMatch(hashToken(token), storedHash));
     },
     currentModel: () => activeApiModel,
+    availableModels: availableVtsModels,
+    loadModel: loadVtsModel,
     modelPosition: currentModelPosition,
     faceFound: () => injectedFaceFound && injectedFaceFound.expiresAt >= Date.now() ? injectedFaceFound.value : latestTrackingFrame?.faceFound ?? false,
     triggerHotkey: async (hotkeyIDOrName) => {
@@ -790,9 +874,27 @@ function startVtsApiServer(): void {
       );
       if (!hotkey) return undefined;
       const trigger: ImportedHotkey = { id: hotkey.hotkeyID, name: hotkey.name, action: hotkey.type, file: hotkey.file, folder: "" };
+      if (hotkey.type.toLowerCase().includes("expression") && hotkey.file) {
+        if (activeExpressionFiles.has(hotkey.file)) activeExpressionFiles.delete(hotkey.file); else activeExpressionFiles.add(hotkey.file);
+      }
       broadcast("vts-hotkey-trigger", trigger);
       sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, true));
       return hotkey.hotkeyID;
+    },
+    expressionStates: () => (activeImportedModel?.expressions ?? []).map((expression) => {
+      const file = basename(expression.file);
+      return {
+        name: expression.name, file, active: activeExpressionFiles.has(file),
+        usedInHotkeys: (activeApiModel?.hotkeys ?? []).filter((hotkey) => basename(hotkey.file) === file).map((hotkey) => ({ name: hotkey.name, id: hotkey.hotkeyID })),
+        parameters: expression.parameters
+      };
+    }),
+    activateExpression: async (expressionFile, active, fadeTime) => {
+      const expression = activeImportedModel?.expressions.find((candidate) => basename(candidate.file) === expressionFile);
+      if (!expression) return false;
+      if (active) activeExpressionFiles.add(expressionFile); else activeExpressionFiles.delete(expressionFile);
+      broadcast("vts-expression-activation", { file: expression.file, active, fadeTime });
+      return true;
     },
     inputParameters: inputParameterLists,
     live2DParameters: live2DParameterList,
@@ -877,6 +979,8 @@ function startVtsApiServer(): void {
 
 async function inspectModelDirectory(directory: string): Promise<ImportedModel> {
   const model = await inspectCubismModelFolder(directory);
+  modelDirectories.add(model.directory);
+  await saveModelDirectories();
   activeModelRoot = model.directory;
   activeDefaultMappings = (model.vTubeStudio?.parameterMappings ?? []).map((mapping) => ({ ...mapping }));
   const overriddenMappings = modelMappingOverrides.get(modelMappingKey(model.directory));
@@ -888,7 +992,7 @@ async function inspectModelDirectory(directory: string): Promise<ImportedModel> 
     textureCount: model.texturePaths.length,
     expressionCount: model.expressions.length,
     motionCount: Object.values(model.motionGroups).flat().length,
-    expressions: model.expressions.map((expression) => ({ name: expression.name, file: relative(model.directory, expression.path) })),
+    expressions: model.expressions.map((expression) => ({ name: expression.name, file: relative(model.directory, expression.path), parameters: expression.parameters })),
     motionGroups: Object.fromEntries(Object.entries(model.motionGroups).map(([group, paths]) => [group, paths.map((path) => relative(model.directory, path))])),
     missingFiles: model.missingFiles,
     manifestUrl: `lumastage-model://active/${encodeURIComponent(basename(model.manifestPath))}`,
@@ -918,6 +1022,7 @@ async function inspectModelDirectory(directory: string): Promise<ImportedModel> 
     }))
   };
   activeImportedModel = imported;
+  activeExpressionFiles.clear();
   return imported;
 }
 
@@ -1200,8 +1305,8 @@ app.whenReady().then(async () => {
     sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, false));
     return true;
   });
-  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadModelMappingOverrides(), loadScenes()]);
-  await backfillItemFilesFromScenes();
+  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadModelMappingOverrides(), loadModelDirectories(), loadScenes()]);
+  await Promise.all([backfillItemFilesFromScenes(), backfillModelDirectoriesFromScenes()]);
   await loadActiveSceneModel();
   startTrackingServer();
   startVtsApiServer();
