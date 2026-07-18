@@ -130,6 +130,57 @@ export interface VtsItemMoveInput {
   flip: boolean;
 }
 
+export interface VtsModelMoveInput {
+  timeInSeconds: number;
+  valuesAreRelativeToModel: boolean;
+  positionX?: number;
+  positionY?: number;
+  rotation?: number;
+  size?: number;
+}
+
+export interface VtsArtMeshMatcher {
+  tintAll: boolean;
+  artMeshNumber: number[];
+  nameExact: string[];
+  nameContains: string[];
+  tagExact: string[];
+  tagContains: string[];
+}
+
+export interface VtsColorTint {
+  colorR: number;
+  colorG: number;
+  colorB: number;
+  colorA: number;
+  mixWithSceneLightingColor: number;
+}
+
+export interface VtsPhysicsGroup {
+  groupID: string;
+  groupName: string;
+  strengthMultiplier: number;
+  windMultiplier: number;
+}
+
+export interface VtsPhysicsState {
+  modelHasPhysics: boolean;
+  physicsSwitchedOn: boolean;
+  usingLegacyPhysics: boolean;
+  physicsFPSSetting: number;
+  baseStrength: number;
+  baseWind: number;
+  overridePluginName: string;
+  physicsGroups: VtsPhysicsGroup[];
+}
+
+export interface VtsPhysicsOverride {
+  id: string;
+  value: number;
+  setBaseValue: boolean;
+  overrideSeconds: number;
+}
+
 export interface VtsApiHost {
   version: string;
   startedAt: number;
@@ -141,6 +192,11 @@ export interface VtsApiHost {
   availableModels(): Promise<VtsAvailableModel[]>;
   loadModel(modelID: string): Promise<"loaded" | "unloaded" | "not-found">;
   modelPosition(): { positionX: number; positionY: number; rotation: number; size: number };
+  moveModel(input: VtsModelMoveInput): Promise<boolean>;
+  artMeshes(): { names: string[]; tags: string[] };
+  tintArtMeshes(sessionID: string, tint: VtsColorTint, matcher: VtsArtMeshMatcher): Promise<string[]>;
+  physicsState(): VtsPhysicsState;
+  setPhysicsOverrides(sessionID: string, pluginName: string, strength: VtsPhysicsOverride[], wind: VtsPhysicsOverride[]): Promise<"ok" | "controlled" | "invalid-group">;
   faceFound(): boolean;
   triggerHotkey(hotkeyIDOrName: string): Promise<string | undefined>;
   expressionStates(): VtsExpressionState[];
@@ -370,6 +426,84 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
     return loaded === "not-found"
       ? error(requestID, 151, "Model ID was not found")
       : response("ModelLoadResponse", requestID, { modelID });
+  }
+
+  if (request.messageType === "MoveModelRequest") {
+    if (!model) return error(requestID, 154, "No model is currently loaded");
+    if (typeof data.timeInSeconds !== "number" || !Number.isFinite(data.timeInSeconds) || data.timeInSeconds < 0 || data.timeInSeconds > 2) return error(requestID, 155, "Model move time must be between 0 and 2 seconds");
+    if (typeof data.valuesAreRelativeToModel !== "boolean") return error(requestID, 156, "valuesAreRelativeToModel must be a boolean");
+    const ranged = (key: string, min: number, max: number): number | undefined | null => {
+      const value = data[key];
+      if (value === undefined) return undefined;
+      return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : null;
+    };
+    const positionX = ranged("positionX", -1000, 1000), positionY = ranged("positionY", -1000, 1000);
+    const rotation = ranged("rotation", -360, 360), size = ranged("size", -100, 100);
+    if (positionX === null || positionY === null || rotation === null || size === null) return error(requestID, 157, "Model move values are outside supported ranges");
+    const moved = await host.moveModel({ timeInSeconds: data.timeInSeconds, valuesAreRelativeToModel: data.valuesAreRelativeToModel, positionX, positionY, rotation, size });
+    return moved ? response("MoveModelResponse", requestID, {}) : error(requestID, 154, "No model is currently loaded");
+  }
+
+  if (request.messageType === "ArtMeshListRequest") {
+    const meshes = model ? host.artMeshes() : { names: [], tags: [] };
+    return response("ArtMeshListResponse", requestID, {
+      modelLoaded: Boolean(model), numberOfArtMeshNames: meshes.names.length, numberOfArtMeshTags: meshes.tags.length,
+      artMeshNames: meshes.names, artMeshTags: meshes.tags
+    });
+  }
+
+  if (request.messageType === "ColorTintRequest") {
+    if (!model) return error(requestID, 600, "No model is currently loaded");
+    const color = objectData(data.colorTint), rawMatcher = objectData(data.artMeshMatcher);
+    const channel = (key: string): number | undefined => typeof color[key] === "number" && Number.isInteger(color[key]) && color[key] >= 0 && color[key] <= 255 ? color[key] as number : undefined;
+    const colorR = channel("colorR"), colorG = channel("colorG"), colorB = channel("colorB"), colorA = channel("colorA");
+    if (colorR === undefined || colorG === undefined || colorB === undefined || colorA === undefined) return error(requestID, 601, "Tint RGBA channels must be integers between 0 and 255");
+    const mix = color.mixWithSceneLightingColor === undefined ? 1 : color.mixWithSceneLightingColor;
+    if (typeof mix !== "number" || !Number.isFinite(mix) || mix < 0 || mix > 1) return error(requestID, 602, "Scene-lighting tint mix must be between 0 and 1");
+    const numbers = rawMatcher.artMeshNumber === undefined ? [] : rawMatcher.artMeshNumber;
+    if (!Array.isArray(numbers) || numbers.length > 1024 || numbers.some((value) => !Number.isInteger(value) || value < 0)) return error(requestID, 603, "ArtMesh number matcher is invalid");
+    const nameExact = stringArray(rawMatcher.nameExact, 1024), nameContains = stringArray(rawMatcher.nameContains, 1024);
+    const tagExact = stringArray(rawMatcher.tagExact, 1024), tagContains = stringArray(rawMatcher.tagContains, 1024);
+    if (!nameExact || !nameContains || !tagExact || !tagContains) return error(requestID, 603, "ArtMesh matcher is invalid");
+    const matched = await host.tintArtMeshes(session.sessionID ?? "", { colorR, colorG, colorB, colorA, mixWithSceneLightingColor: mix }, {
+      tintAll: rawMatcher.tintAll === true, artMeshNumber: numbers as number[], nameExact, nameContains, tagExact, tagContains
+    });
+    return response("ColorTintResponse", requestID, { matchedArtMeshes: matched.length });
+  }
+
+  if (request.messageType === "GetCurrentModelPhysicsRequest") {
+    const physics = host.physicsState();
+    return response("GetCurrentModelPhysicsResponse", requestID, {
+      modelLoaded: Boolean(model), modelName: model?.modelName ?? "", modelID: model?.modelID ?? "",
+      modelHasPhysics: Boolean(model) && physics.modelHasPhysics, physicsSwitchedOn: Boolean(model) && physics.physicsSwitchedOn,
+      usingLegacyPhysics: physics.usingLegacyPhysics, physicsFPSSetting: physics.physicsFPSSetting,
+      baseStrength: physics.baseStrength, baseWind: physics.baseWind,
+      apiPhysicsOverrideActive: Boolean(physics.overridePluginName), apiPhysicsOverridePluginName: physics.overridePluginName,
+      physicsGroups: model ? physics.physicsGroups : []
+    });
+  }
+
+  if (request.messageType === "SetCurrentModelPhysicsRequest") {
+    if (!model) return error(requestID, 700, "No model is currently loaded");
+    const parseOverrides = (value: unknown): VtsPhysicsOverride[] | undefined => {
+      if (value === undefined) return [];
+      if (!Array.isArray(value) || value.length > 128) return undefined;
+      const output: VtsPhysicsOverride[] = [];
+      for (const entry of value) {
+        if (!entry || typeof entry !== "object") return undefined;
+        const item = entry as Record<string, unknown>;
+        if (typeof item.id !== "string" || typeof item.value !== "number" || !Number.isFinite(item.value) || typeof item.setBaseValue !== "boolean" || typeof item.overrideSeconds !== "number" || !Number.isFinite(item.overrideSeconds)) return undefined;
+        output.push({ id: item.id, value: item.value, setBaseValue: item.setBaseValue, overrideSeconds: Math.max(0.5, Math.min(5, item.overrideSeconds)) });
+      }
+      return output;
+    };
+    const strength = parseOverrides(data.strengthOverrides), wind = parseOverrides(data.windOverrides);
+    if (!strength || !wind || strength.length + wind.length === 0) return error(requestID, 701, "Physics overrides are missing or invalid");
+    const normalized = (items: VtsPhysicsOverride[]) => items.map((item) => ({ ...item, value: Math.max(0, Math.min(item.setBaseValue ? 100 : 2, item.value)) }));
+    const result = await host.setPhysicsOverrides(session.sessionID ?? "", session.pluginName ?? "", normalized(strength), normalized(wind));
+    if (result === "controlled") return error(requestID, 702, "Physics is controlled by another plugin");
+    if (result === "invalid-group") return error(requestID, 703, "Physics group was not found in the current model");
+    return response("SetCurrentModelPhysicsResponse", requestID, {});
   }
 
   if (request.messageType === "HotkeysInCurrentModelRequest") {

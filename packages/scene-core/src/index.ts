@@ -5,8 +5,8 @@ export type GradientPreset = z.infer<typeof gradientPresetSchema>;
 
 export const sceneTransformSchema = z.object({
   scale: z.number().finite().min(0.2).max(3),
-  positionX: z.number().finite().min(-1).max(1),
-  positionY: z.number().finite().min(-1).max(1),
+  positionX: z.number().finite().min(-1000).max(1000),
+  positionY: z.number().finite().min(-1000).max(1000),
   rotation: z.number().finite().min(-180).max(180),
   mirror: z.boolean()
 });
@@ -105,8 +105,8 @@ export function normalizeSceneTransform(input: Partial<SceneTransform>, current:
     typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
   return {
     scale: clamp(input.scale, current.scale, 0.2, 3),
-    positionX: clamp(input.positionX, current.positionX, -1, 1),
-    positionY: clamp(input.positionY, current.positionY, -1, 1),
+    positionX: clamp(input.positionX, current.positionX, -1000, 1000),
+    positionY: clamp(input.positionY, current.positionY, -1000, 1000),
     rotation: clamp(input.rotation, current.rotation, -180, 180),
     mirror: typeof input.mirror === "boolean" ? input.mirror : current.mirror
   };

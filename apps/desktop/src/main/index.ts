@@ -1,5 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
-import { copyFile, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { basename, isAbsolute, relative, resolve, sep, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,9 +8,9 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
 import { inspectCubismModelFolder, parseEditableVTubeParameterMappings } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsParameter, type VtsSceneItem } from "@lumastage/vts-api";
+import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -39,6 +39,10 @@ let activeModelRoot: string | undefined;
 let activeApiModel: VtsCurrentModel | undefined;
 let activeImportedModel: ImportedModel | undefined;
 const activeExpressionFiles = new Set<string>();
+let activeArtMeshNames: string[] = [];
+const artMeshTints = new Map<string, { sessionID: string; tint: VtsColorTint; updatedAt: number }>();
+interface ActivePhysicsOverride extends VtsPhysicsOverride { expiresAt: number }
+let physicsController: { sessionID: string; pluginName: string; strength: ActivePhysicsOverride[]; wind: ActivePhysicsOverride[] } | undefined;
 let activeDefaultMappings: VTubeParameterMapping[] = [];
 const modelMappingOverrides = new Map<string, VTubeParameterMapping[]>();
 let modelMappingSaveQueue: Promise<void> = Promise.resolve();
@@ -278,6 +282,11 @@ function clearActiveModel(): void {
   activeImportedModel = undefined;
   activeDefaultMappings = [];
   activeExpressionFiles.clear();
+  activeArtMeshNames = [];
+  artMeshTints.clear();
+  physicsController = undefined;
+  publishArtMeshTints();
+  publishPhysicsControl();
 }
 
 async function loadActiveSceneModel(): Promise<ImportedModel | null> {
@@ -612,6 +621,57 @@ function cubismCorePath(): string {
   return join(app.getPath("userData"), "runtime", "live2dcubismcore.min.js");
 }
 
+// pixi-live2d-display 0.5 targets the Cubism 5.2 Core ABI. Live2D keeps this
+// official compatible build under the versioned /05 path; unversioned Latest
+// currently serves Core 6 and does not expose the render-order array expected
+// by this renderer adapter.
+const LIVE2D_CORE_URL = "https://cubism.live2d.com/sdk-web/core/05/live2dcubismcore.min.js";
+const LIVE2D_WEB_SDK_PAGE = "https://www.live2d.com/en/sdk/download/web/";
+
+async function validateAndInstallCubismCore(source: Uint8Array): Promise<CubismCoreStatus> {
+  if (source.byteLength === 0 || source.byteLength > 16 * 1024 * 1024) throw new Error("Cubism Core file has an invalid size");
+  const text = new TextDecoder().decode(source);
+  if (!text.includes("Live2DCubismCore") || !text.includes("Moc")) throw new Error("Downloaded file is not Live2D Cubism Core for Web");
+  await mkdir(join(app.getPath("userData"), "runtime"), { recursive: true });
+  await writeFile(cubismCorePath(), source, { mode: 0o600 });
+  return coreStatus();
+}
+
+async function chooseAndInstallCubismCore(): Promise<CubismCoreStatus | null> {
+  const result = await dialog.showOpenDialog({
+    title: "Select live2dcubismcore.min.js from the official Cubism SDK for Web",
+    properties: ["openFile"], filters: [{ name: "Live2D Cubism Core", extensions: ["js"] }]
+  });
+  const sourcePath = result.filePaths[0];
+  if (result.canceled || !sourcePath) return null;
+  return validateAndInstallCubismCore(await readFile(sourcePath));
+}
+
+async function installOfficialCubismCore(): Promise<CubismCoreStatus | null> {
+  const consent = await dialog.showMessageBox({
+    type: "info", title: "Install official Live2D Cubism Core",
+    message: "Download and install Cubism Core for Web from Live2D?",
+    detail: "Cubism Core is proprietary Live2D software. By downloading or using it, you agree to Live2D's Proprietary Software License Agreement and Open Software License Agreement. LumaStage downloads only live2dcubismcore.min.js from cubism.live2d.com and stores it privately on this computer.",
+    buttons: ["Agree and install", "View license page", "Cancel"], defaultId: 0, cancelId: 2, noLink: true
+  });
+  if (consent.response === 1) { await shell.openExternal(LIVE2D_WEB_SDK_PAGE); return null; }
+  if (consent.response !== 0) return null;
+  try {
+    const response = await net.fetch(LIVE2D_CORE_URL, { redirect: "follow" });
+    if (!response.ok) throw new Error(`Live2D download returned HTTP ${response.status}`);
+    if (new URL(response.url).hostname !== "cubism.live2d.com") throw new Error("Live2D download redirected to an unexpected host");
+    return await validateAndInstallCubismCore(new Uint8Array(await response.arrayBuffer()));
+  } catch (reason) {
+    const fallback = await dialog.showMessageBox({
+      type: "warning", title: "Automatic download failed", message: reason instanceof Error ? reason.message : "Could not download Cubism Core",
+      detail: "You can open Live2D's official download page or select live2dcubismcore.min.js if you already downloaded the SDK.",
+      buttons: ["Open official page", "Select file", "Cancel"], defaultId: 0, cancelId: 2, noLink: true
+    });
+    if (fallback.response === 0) { await shell.openExternal(LIVE2D_WEB_SDK_PAGE); return null; }
+    return fallback.response === 1 ? chooseAndInstallCubismCore() : null;
+  }
+}
+
 async function coreStatus(): Promise<CubismCoreStatus> {
   try {
     const source = await readFile(cubismCorePath(), "utf8");
@@ -710,8 +770,118 @@ function currentModelPosition(): { positionX: number; positionY: number; rotatio
     positionX: transform.positionX,
     positionY: -transform.positionY,
     rotation: transform.rotation < 0 ? transform.rotation + 360 : transform.rotation,
-    size: Math.max(-100, Math.min(100, (transform.scale - 1) * 50))
+    size: Number((transform.scale <= 1 ? (transform.scale - 1) / 0.008 : (transform.scale - 1) / 0.02).toFixed(6))
   };
+}
+
+function scaleFromVtsSize(size: number): number {
+  return size <= 0 ? 1 + size * 0.008 : 1 + size * 0.02;
+}
+
+async function moveVtsModel(input: VtsModelMoveInput): Promise<boolean> {
+  if (!activeApiModel) return false;
+  const scene = storedActiveScene();
+  const from = { ...scene.transform };
+  const current = currentModelPosition();
+  const value = (next: number | undefined, previous: number) => next === undefined ? previous : input.valuesAreRelativeToModel ? previous + next : next;
+  const target = {
+    positionX: value(input.positionX, current.positionX),
+    positionY: -value(input.positionY, current.positionY),
+    rotation: ((value(input.rotation, current.rotation) + 180) % 360 + 360) % 360 - 180,
+    scale: scaleFromVtsSize(Math.max(-100, Math.min(100, value(input.size, current.size))))
+  };
+  scene.transform = normalizeSceneTransform(target, scene.transform);
+  await saveScenes();
+  broadcast("vts-model-move", { from, to: scene.transform, durationMs: input.timeInSeconds * 1000 });
+  broadcastSceneWorkspace();
+  sendModelMovedEvent();
+  return true;
+}
+
+function currentArtMeshTintState(): VtsArtMeshTintState {
+  return { artMeshColors: Object.fromEntries([...artMeshTints].map(([name, entry]) => [name, {
+    colorR: entry.tint.colorR, colorG: entry.tint.colorG, colorB: entry.tint.colorB, colorA: entry.tint.colorA
+  }])) };
+}
+
+function publishArtMeshTints(): void {
+  broadcast("vts-artmesh-tint", currentArtMeshTintState());
+}
+
+function tintVtsArtMeshes(sessionID: string, tint: VtsColorTint, matcher: VtsArtMeshMatcher): string[] {
+  const exactNames = matcher.nameExact.map((value) => value.toLowerCase());
+  const nameFragments = matcher.nameContains.map((value) => value.toLowerCase());
+  const exactTags = matcher.tagExact.map((value) => value.toLowerCase());
+  const tagFragments = matcher.tagContains.map((value) => value.toLowerCase());
+  const selectedNumbers = new Set(matcher.artMeshNumber);
+  const matched = activeArtMeshNames.filter((name, index) => {
+    const lowerName = name.toLowerCase();
+    const tags = (activeImportedModel?.artMeshTags[name] ?? []).map((tag) => tag.toLowerCase());
+    return matcher.tintAll || selectedNumbers.has(index) || exactNames.includes(lowerName) || nameFragments.some((fragment) => lowerName.includes(fragment)) ||
+      tags.some((tag) => exactTags.includes(tag) || tagFragments.some((fragment) => tag.includes(fragment)));
+  });
+  for (const name of matched) {
+    if (tint.colorR === 255 && tint.colorG === 255 && tint.colorB === 255 && tint.colorA === 255) artMeshTints.delete(name);
+    else artMeshTints.set(name, { sessionID, tint, updatedAt: Date.now() });
+  }
+  publishArtMeshTints();
+  return matched;
+}
+
+function activePhysicsOverrides(): typeof physicsController {
+  if (!physicsController) return undefined;
+  const now = Date.now();
+  physicsController.strength = physicsController.strength.filter((item) => item.expiresAt > now);
+  physicsController.wind = physicsController.wind.filter((item) => item.expiresAt > now);
+  if (physicsController.strength.length + physicsController.wind.length === 0) physicsController = undefined;
+  return physicsController;
+}
+
+function currentPhysicsControl(): VtsPhysicsControl {
+  const control: VtsPhysicsControl = { baseStrength: 50, baseWind: 0, groups: Object.fromEntries((activeImportedModel?.physicsGroups ?? []).map((group) => [group.id, { strengthMultiplier: 1, windMultiplier: 1 }])) };
+  const overrides = activePhysicsOverrides();
+  for (const item of overrides?.strength ?? []) {
+    if (item.setBaseValue) control.baseStrength = item.value;
+    else if (control.groups[item.id]) control.groups[item.id].strengthMultiplier = item.value;
+  }
+  for (const item of overrides?.wind ?? []) {
+    if (item.setBaseValue) control.baseWind = item.value;
+    else if (control.groups[item.id]) control.groups[item.id].windMultiplier = item.value;
+  }
+  return control;
+}
+
+function publishPhysicsControl(): void {
+  broadcast("vts-physics-control", currentPhysicsControl());
+}
+
+function setVtsPhysicsOverrides(sessionID: string, pluginName: string, strength: VtsPhysicsOverride[], wind: VtsPhysicsOverride[]): "ok" | "controlled" | "invalid-group" {
+  const active = activePhysicsOverrides();
+  if (active && active.sessionID !== sessionID) return "controlled";
+  const groupIDs = new Set(activeImportedModel?.physicsGroups.map((group) => group.id) ?? []);
+  if ([...strength, ...wind].some((item) => !item.setBaseValue && !groupIDs.has(item.id))) return "invalid-group";
+  const now = Date.now();
+  const timed = (items: VtsPhysicsOverride[]) => items.map((item) => ({ ...item, expiresAt: now + item.overrideSeconds * 1000 }));
+  const merge = (previous: ActivePhysicsOverride[], next: ActivePhysicsOverride[]) => {
+    const keys = new Set(next.map((item) => `${item.setBaseValue ? "base" : "group"}:${item.id}`));
+    return [...previous.filter((item) => !keys.has(`${item.setBaseValue ? "base" : "group"}:${item.id}`)), ...next];
+  };
+  physicsController = {
+    sessionID, pluginName,
+    strength: merge(active?.strength ?? [], timed(strength)),
+    wind: merge(active?.wind ?? [], timed(wind))
+  };
+  publishPhysicsControl();
+  const timeout = Math.max(...[...strength, ...wind].map((item) => item.overrideSeconds)) * 1000 + 25;
+  setTimeout(publishPhysicsControl, timeout);
+  return "ok";
+}
+
+function cleanupVtsVisualOverrides(sessionID: string): void {
+  let tintChanged = false;
+  for (const [name, entry] of artMeshTints) if (entry.sessionID === sessionID) { artMeshTints.delete(name); tintChanged = true; }
+  if (tintChanged) publishArtMeshTints();
+  if (physicsController?.sessionID === sessionID) { physicsController = undefined; publishPhysicsControl(); }
 }
 
 function sendVtsEvent(eventName: VtsEventName, data: Record<string, unknown>): void {
@@ -867,6 +1037,19 @@ function startVtsApiServer(): void {
     availableModels: availableVtsModels,
     loadModel: loadVtsModel,
     modelPosition: currentModelPosition,
+    moveModel: moveVtsModel,
+    artMeshes: () => ({
+      names: [...activeArtMeshNames],
+      tags: [...new Set(Object.values(activeImportedModel?.artMeshTags ?? {}).flat())]
+    }),
+    tintArtMeshes: async (sessionID, tint, matcher) => tintVtsArtMeshes(sessionID, tint, matcher),
+    physicsState: () => ({
+      modelHasPhysics: Boolean(activeApiModel?.hasPhysicsFile), physicsSwitchedOn: Boolean(activeApiModel?.hasPhysicsFile),
+      usingLegacyPhysics: false, physicsFPSSetting: -1, baseStrength: 50, baseWind: 0,
+      overridePluginName: activePhysicsOverrides()?.pluginName ?? "",
+      physicsGroups: (activeImportedModel?.physicsGroups ?? []).map((group) => ({ groupID: group.id, groupName: group.name, strengthMultiplier: 1, windMultiplier: 1 }))
+    }),
+    setPhysicsOverrides: async (sessionID, pluginName, strength, wind) => setVtsPhysicsOverrides(sessionID, pluginName, strength, wind),
     faceFound: () => injectedFaceFound && injectedFaceFound.expiresAt >= Date.now() ? injectedFaceFound.value : latestTrackingFrame?.faceFound ?? false,
     triggerHotkey: async (hotkeyIDOrName) => {
       const hotkey = activeApiModel?.hotkeys.find((candidate) =>
@@ -962,6 +1145,7 @@ function startVtsApiServer(): void {
     });
     socket.on("close", () => {
       void cleanupDisconnectedPluginItems(apiSession);
+      cleanupVtsVisualOverrides(apiSession.sessionID ?? "");
       pluginSessions.delete(socket);
       publishStatus();
     });
@@ -999,7 +1183,9 @@ async function inspectModelDirectory(directory: string): Promise<ImportedModel> 
     vTubeModelName: model.vTubeStudio?.name,
     vTubeParameterMappings: (overriddenMappings ?? activeDefaultMappings).map((mapping) => ({ ...mapping })),
     hasCustomMappings: Boolean(overriddenMappings),
-    vTubeHotkeys: model.vTubeStudio?.hotkeys ?? []
+    vTubeHotkeys: model.vTubeStudio?.hotkeys ?? [],
+    artMeshTags: model.artMeshTags,
+    physicsGroups: model.physicsGroups
   };
   activeApiModel = {
     modelName: model.vTubeStudio?.name ?? model.name,
@@ -1023,6 +1209,11 @@ async function inspectModelDirectory(directory: string): Promise<ImportedModel> 
   };
   activeImportedModel = imported;
   activeExpressionFiles.clear();
+  activeArtMeshNames = [];
+  artMeshTints.clear();
+  physicsController = undefined;
+  publishArtMeshTints();
+  publishPhysicsControl();
   return imported;
 }
 
@@ -1242,22 +1433,7 @@ app.whenReady().then(async () => {
     return workspace;
   });
   ipcMain.handle("cubism-core-status", coreStatus);
-  ipcMain.handle("install-cubism-core", async () => {
-    const result = await dialog.showOpenDialog({
-      title: "Select the official Live2D Cubism Core for Web",
-      properties: ["openFile"],
-      filters: [{ name: "Live2D Cubism Core", extensions: ["js"] }]
-    });
-    const sourcePath = result.filePaths[0];
-    if (result.canceled || !sourcePath) return null;
-    const sourceStat = await stat(sourcePath);
-    if (sourceStat.size > 16 * 1024 * 1024) throw new Error("Cubism Core file is unexpectedly large");
-    const source = await readFile(sourcePath, "utf8");
-    if (!source.includes("Live2DCubismCore")) throw new Error("The selected file is not Live2D Cubism Core for Web");
-    await mkdir(join(app.getPath("userData"), "runtime"), { recursive: true });
-    await copyFile(sourcePath, cubismCorePath());
-    return coreStatus();
-  });
+  ipcMain.handle("install-cubism-core", installOfficialCubismCore);
   ipcMain.handle("set-overlay-mode", (event, enabled: unknown) => {
     if (typeof enabled !== "boolean") throw new Error("Overlay mode must be a boolean");
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -1303,6 +1479,15 @@ app.whenReady().then(async () => {
     const hotkey = activeApiModel?.hotkeys.find((candidate) => candidate.hotkeyID === requestedHotkeyID);
     if (!hotkey) return false;
     sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, false));
+    return true;
+  });
+  ipcMain.handle("report-artmeshes", (_event, modelDirectory: unknown, names: unknown) => {
+    if (typeof modelDirectory !== "string" || modelDirectory !== activeImportedModel?.directory) return false;
+    if (!Array.isArray(names) || names.length > 100_000 || names.some((name) => typeof name !== "string" || name.length === 0 || name.length > 256)) throw new Error("Invalid ArtMesh report");
+    activeArtMeshNames = [...new Set(names as string[])];
+    if (activeApiModel) activeApiModel.numberOfLive2DArtmeshes = activeArtMeshNames.length;
+    publishArtMeshTints();
+    publishPhysicsControl();
     return true;
   });
   await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadModelMappingOverrides(), loadModelDirectories(), loadScenes()]);

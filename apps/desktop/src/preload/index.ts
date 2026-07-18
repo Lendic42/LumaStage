@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsExpressionActivation, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -33,6 +33,21 @@ const bridge: LumaStageBridge = {
     ipcRenderer.on("vts-expression-activation", handler);
     return () => ipcRenderer.removeListener("vts-expression-activation", handler);
   },
+  onVtsArtMeshTint(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, state: VtsArtMeshTintState) => listener(state);
+    ipcRenderer.on("vts-artmesh-tint", handler);
+    return () => ipcRenderer.removeListener("vts-artmesh-tint", handler);
+  },
+  onVtsPhysicsControl(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, state: VtsPhysicsControl) => listener(state);
+    ipcRenderer.on("vts-physics-control", handler);
+    return () => ipcRenderer.removeListener("vts-physics-control", handler);
+  },
+  onVtsModelMove(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, move: VtsModelMoveAnimation) => listener(move);
+    ipcRenderer.on("vts-model-move", handler);
+    return () => ipcRenderer.removeListener("vts-model-move", handler);
+  },
   onSceneWorkspaceChanged(listener) {
     const handler = (_event: Electron.IpcRendererEvent, workspace: SceneWorkspace) => listener(workspace);
     ipcRenderer.on("scene-workspace-changed", handler);
@@ -56,7 +71,8 @@ const bridge: LumaStageBridge = {
   forgetTrustedDevices: () => ipcRenderer.invoke("forget-trusted-devices") as Promise<boolean>,
   resolvePluginAuthorization: (id, approved) => ipcRenderer.invoke("resolve-plugin-authorization", id, approved) as Promise<boolean>,
   forgetPluginAccess: () => ipcRenderer.invoke("forget-plugin-access") as Promise<boolean>,
-  notifyLocalHotkey: (hotkeyID) => ipcRenderer.invoke("notify-local-hotkey", hotkeyID) as Promise<boolean>
+  notifyLocalHotkey: (hotkeyID) => ipcRenderer.invoke("notify-local-hotkey", hotkeyID) as Promise<boolean>,
+  reportArtMeshes: (modelDirectory, names) => ipcRenderer.invoke("report-artmeshes", modelDirectory, names) as Promise<boolean>
 };
 
 contextBridge.exposeInMainWorld("lumastage", bridge);

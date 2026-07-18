@@ -22,6 +22,15 @@ function host(): VtsApiHost {
     availableModels: async () => [{ modelName: "Haru", modelID: "haru", vtsModelName: "Haru.vtube.json", vtsModelIconName: "" }],
     loadModel: async (modelID) => modelID === "haru" ? "loaded" : modelID === "" ? "unloaded" : "not-found",
     modelPosition: () => ({ positionX: 0.1, positionY: -0.2, rotation: 12, size: 5 }),
+    moveModel: async () => true,
+    artMeshes: () => ({ names: ["HairFront", "Mouth"], tags: ["hair", "face"] }),
+    tintArtMeshes: async () => ["Mouth"],
+    physicsState: () => ({
+      modelHasPhysics: true, physicsSwitchedOn: true, usingLegacyPhysics: false, physicsFPSSetting: -1,
+      baseStrength: 50, baseWind: 0, overridePluginName: "",
+      physicsGroups: [{ groupID: "PhysicsSetting1", groupName: "Hair", strengthMultiplier: 1, windMultiplier: 1 }]
+    }),
+    setPhysicsOverrides: async (_sessionID, _pluginName, strength) => strength.some((item) => !item.setBaseValue && item.id === "missing") ? "invalid-group" : "ok",
     faceFound: () => true,
     triggerHotkey: async (id) => id.toLowerCase() === "smile" ? "smile" : undefined,
     expressionStates: () => [{ name: "smile", file: "smile.exp3.json", active: false, usedInHotkeys: [{ name: "Smile", id: "smile" }], parameters: [{ name: "ParamMouthForm", value: 1 }] }],
@@ -91,6 +100,37 @@ describe("VTube Studio API compatibility core", () => {
     const activated = await handleVtsApiRequest(request("ExpressionActivationRequest", { expressionFile: "smile.exp3.json", active: true, fadeTime: 5 }), session, host());
     expect(activated.messageType).toBe("ExpressionActivationResponse");
     const invalid = await handleVtsApiRequest(request("ExpressionActivationRequest", { expressionFile: "missing.exp3.json", active: true }), session, host());
+    expect(invalid.messageType).toBe("APIError");
+  });
+
+  it("moves the model and rejects out-of-range transforms", async () => {
+    const session: VtsApiSession = { authenticated: true };
+    const moved = await handleVtsApiRequest(request("MoveModelRequest", { timeInSeconds: 0.2, valuesAreRelativeToModel: false, positionX: 0.1, size: -22.5 }), session, host());
+    expect(moved.messageType).toBe("MoveModelResponse");
+    const invalid = await handleVtsApiRequest(request("MoveModelRequest", { timeInSeconds: 3, valuesAreRelativeToModel: false }), session, host());
+    expect(invalid.messageType).toBe("APIError");
+  });
+
+  it("lists and tints ArtMeshes with official matcher fields", async () => {
+    const session: VtsApiSession = { authenticated: true, sessionID: "session" };
+    const listed = await handleVtsApiRequest(request("ArtMeshListRequest"), session, host());
+    expect((listed.data as { numberOfArtMeshNames: number }).numberOfArtMeshNames).toBe(2);
+    const tinted = await handleVtsApiRequest(request("ColorTintRequest", {
+      colorTint: { colorR: 255, colorG: 150, colorB: 0, colorA: 255 },
+      artMeshMatcher: { tintAll: false, nameContains: ["mouth"] }
+    }), session, host());
+    expect((tinted.data as { matchedArtMeshes: number }).matchedArtMeshes).toBe(1);
+  });
+
+  it("reports physics and validates temporary overrides", async () => {
+    const session: VtsApiSession = { authenticated: true, sessionID: "session", pluginName: "Test Plugin" };
+    const state = await handleVtsApiRequest(request("GetCurrentModelPhysicsRequest"), session, host());
+    expect((state.data as { physicsGroups: unknown[] }).physicsGroups).toHaveLength(1);
+    const set = await handleVtsApiRequest(request("SetCurrentModelPhysicsRequest", {
+      strengthOverrides: [{ id: "PhysicsSetting1", value: 1.5, setBaseValue: false, overrideSeconds: 2 }]
+    }), session, host());
+    expect(set.messageType).toBe("SetCurrentModelPhysicsResponse");
+    const invalid = await handleVtsApiRequest(request("SetCurrentModelPhysicsRequest", { strengthOverrides: [] }), session, host());
     expect(invalid.messageType).toBe("APIError");
   });
 

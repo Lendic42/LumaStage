@@ -28,6 +28,10 @@ User-tuned tracking mappings are stored separately from model assets. The main p
 
 Imported model directories also live in a private main-process library independent of scenes. `AvailableModelsRequest` reads validated metadata from that library, while `ModelLoadRequest` attaches the selected model to the active scene (or clears it for an empty ID), broadcasts the new workspace and emits model events. Expression state remains in main and activation is forwarded to the renderer through a narrow typed IPC event.
 
+The Cubism adapter reports actual drawable IDs back to main after a model is initialized. This keeps ArtMesh lists, tag matching and tint commands tied to renderer evidence instead of manifest guesses. Physics metadata comes from `*.physics3.json`; API overrides are session-owned, expire after their requested timer and are reset on disconnect. Model movement persists its final scene transform while a typed renderer event interpolates the visible transition.
+
+Cubism Core remains outside the repository and packages. The missing-Core action requires an explicit Live2D license confirmation, downloads from a fixed official HTTPS host, rejects redirects to other hosts and validates the payload before writing it to the private runtime directory. Manual selection remains a fallback when the official host is unavailable.
+
 The renderer boundary is an adapter rather than a direct dependency on one model engine:
 
 - `CubismRenderer`: existing `.moc3`/`.model3.json` models through an installed Cubism Core.

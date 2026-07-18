@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
 import { Application } from "pixi.js";
+import "@pixi/unsafe-eval";
 import type { Live2DModel as Live2DModelType, Cubism4InternalModel } from "pixi-live2d-display/cubism4";
 import { TrackingEngine } from "@lumastage/tracking-core";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { ImportedHotkey, ImportedModel, SceneTransform, VtsExpressionActivation, VtsParameterInjection } from "../../shared/bridge";
+import type { ImportedHotkey, ImportedModel, SceneTransform, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl } from "../../shared/bridge";
 
 interface Props {
   model: ImportedModel | null;
@@ -12,6 +13,9 @@ interface Props {
   hotkeyRequest: { nonce: number; hotkey: ImportedHotkey } | null;
   parameterInjection: { nonce: number; value: VtsParameterInjection } | null;
   expressionRequest: { nonce: number; value: VtsExpressionActivation } | null;
+  artMeshTint: VtsArtMeshTintState;
+  physicsControl: VtsPhysicsControl;
+  modelMove: { nonce: number; value: VtsModelMoveAnimation } | null;
   sceneTransform: SceneTransform;
   onReady(ready: boolean): void;
   onError(message: string | null): void;
@@ -40,7 +44,7 @@ function loadCubismCore(): Promise<void> {
   return loading;
 }
 
-export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, expressionRequest, sceneTransform, onReady, onError }: Props) {
+export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, expressionRequest, artMeshTint, physicsControl, modelMove, sceneTransform, onReady, onError }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef(new TrackingEngine());
@@ -48,11 +52,41 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
   const expressionHandlerRef = useRef<((activation: VtsExpressionActivation) => Promise<void>) | null>(null);
   const sceneTransformRef = useRef(sceneTransform);
   const fitHandlerRef = useRef<(() => void) | null>(null);
+  const artMeshTintRef = useRef(artMeshTint);
+  const physicsControlRef = useRef(physicsControl);
+
+  useEffect(() => { artMeshTintRef.current = artMeshTint; }, [artMeshTint]);
+  useEffect(() => { physicsControlRef.current = physicsControl; }, [physicsControl]);
 
   useEffect(() => {
     sceneTransformRef.current = sceneTransform;
     fitHandlerRef.current?.();
   }, [sceneTransform]);
+
+  useEffect(() => {
+    if (!modelMove) return;
+    const { from, to, durationMs } = modelMove.value;
+    if (durationMs <= 0) {
+      sceneTransformRef.current = to;
+      fitHandlerRef.current?.();
+      return;
+    }
+    const startedAt = performance.now();
+    let animationFrame = 0;
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / durationMs);
+      const eased = 1 - (1 - progress) ** 3;
+      const interpolate = (start: number, end: number) => start + (end - start) * eased;
+      sceneTransformRef.current = {
+        scale: interpolate(from.scale, to.scale), positionX: interpolate(from.positionX, to.positionX),
+        positionY: interpolate(from.positionY, to.positionY), rotation: interpolate(from.rotation, to.rotation), mirror: to.mirror
+      };
+      fitHandlerRef.current?.();
+      if (progress < 1) animationFrame = requestAnimationFrame(animate);
+    };
+    animationFrame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [modelMove]);
 
   useEffect(() => {
     engineRef.current.ingest(frame);
@@ -152,7 +186,49 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
           liveModel?.internalModel.coreModel.setParameterValueById(parameterId, value);
         }
       });
-      app.ticker.add(() => liveModel?.update(app?.ticker.deltaMS ?? 16.67));
+      const artMeshNames = liveModel.internalModel.getDrawableIDs();
+      await window.lumastage.reportArtMeshes(imported.directory, artMeshNames);
+      const core = liveModel.internalModel.coreModel as unknown as { getModel(): { drawables: { multiplyColors?: Float32Array } } };
+      const drawables = core.getModel().drawables;
+      const physics = liveModel.internalModel.physics as unknown as {
+        getOption?(): { wind: { x: number; y: number } };
+        setOptions?(options: { wind: { x: number; y: number } }): void;
+        _physicsRig?: {
+          settings: Array<{ baseOutputIndex: number; outputCount: number }>;
+          outputs: Array<{ weight: number }>;
+        };
+      } | undefined;
+      const defaultPhysicsWeights = physics?._physicsRig?.outputs.map((output) => output.weight) ?? [];
+      app.ticker.add(() => {
+        liveModel?.update(app?.ticker.deltaMS ?? 16.67);
+        if (!liveModel) return;
+        const colors = drawables.multiplyColors;
+        if (colors) for (let index = 0; index < artMeshNames.length; index += 1) {
+          const color = artMeshTintRef.current.artMeshColors[artMeshNames[index]] ?? { colorR: 255, colorG: 255, colorB: 255, colorA: 255 };
+          colors[index * 4] = color.colorR / 255;
+          colors[index * 4 + 1] = color.colorG / 255;
+          colors[index * 4 + 2] = color.colorB / 255;
+          colors[index * 4 + 3] = color.colorA / 255;
+        }
+        if (physics) {
+          const control = physicsControlRef.current;
+          const options = physics.getOption?.();
+          if (options) {
+            options.wind.x = control.baseWind / 100;
+            physics.setOptions?.(options);
+          }
+          const rig = physics._physicsRig;
+          if (rig) rig.settings.forEach((setting, groupIndex) => {
+            const group = imported.physicsGroups[groupIndex];
+            const groupControl = group ? control.groups[group.id] : undefined;
+            const multiplier = (groupControl?.strengthMultiplier ?? 1) * (control.baseWind > 0 ? groupControl?.windMultiplier ?? 1 : 1);
+            for (let offset = 0; offset < setting.outputCount; offset += 1) {
+              const outputIndex = setting.baseOutputIndex + offset;
+              if (rig.outputs[outputIndex]) rig.outputs[outputIndex].weight = (defaultPhysicsWeights[outputIndex] ?? rig.outputs[outputIndex].weight) * (control.baseStrength / 50) * multiplier;
+            }
+          });
+        }
+      });
       liveModel.on("hit", (areas: string[]) => {
         if (areas.length > 0) void liveModel?.motion("TapBody");
       });

@@ -20,9 +20,9 @@ describe("scene library", () => {
     expect(sceneLibrarySchema.safeParse({ version: 1, activeSceneId: id, scenes: [scene, scene] }).success).toBe(false);
   });
 
-  it("clamps renderer transforms to safe visible ranges", () => {
+  it("supports VTS off-screen coordinates while clamping scale and rotation", () => {
     const normalized = normalizeSceneTransform({ scale: 99, positionX: -4, rotation: 999, mirror: true }, { scale: 1, positionX: 0, positionY: 0, rotation: 0, mirror: false });
-    expect(normalized).toEqual({ scale: 3, positionX: -1, positionY: 0, rotation: 180, mirror: true });
+    expect(normalized).toEqual({ scale: 3, positionX: -4, positionY: 0, rotation: 180, mirror: true });
   });
 
   it("migrates older scene documents with no items", () => {

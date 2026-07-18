@@ -42,6 +42,18 @@ describe("Cubism model folder inspection", () => {
     expect(model.expressions[0].parameters).toEqual([{ name: "ParamMouthForm", value: 1 }]);
   });
 
+  it("reads ArtMesh tags and physics group metadata", async () => {
+    const root = await fixture({
+      Version: 3,
+      FileReferences: { Moc: "avatar.moc3", Textures: ["textures/00.png"], UserData: "avatar.userdata3.json", Physics: "avatar.physics3.json" }
+    });
+    await writeFile(join(root, "avatar.userdata3.json"), JSON.stringify({ UserData: [{ Target: "ArtMesh", Id: "HairFront", Value: "hair front\nsoft" }] }));
+    await writeFile(join(root, "avatar.physics3.json"), JSON.stringify({ PhysicsSettings: [{ Id: "PhysicsSetting1", Name: null }] }));
+    const model = await inspectCubismModelFolder(root);
+    expect(model.artMeshTags.HairFront).toEqual(["hair", "front", "soft"]);
+    expect(model.physicsGroups).toEqual([{ id: "PhysicsSetting1", name: "" }]);
+  });
+
   it("rejects asset paths that escape the model folder", async () => {
     const root = await fixture({ Version: 3, FileReferences: { Moc: "../secret.moc3", Textures: [] } });
     await expect(inspectCubismModelFolder(root)).rejects.toThrow(/escapes/);

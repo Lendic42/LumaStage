@@ -29,6 +29,8 @@ export interface ImportedModel {
   vTubeParameterMappings: VTubeParameterMapping[];
   hasCustomMappings: boolean;
   vTubeHotkeys: ImportedHotkey[];
+  artMeshTags: Record<string, string[]>;
+  physicsGroups: Array<{ id: string; name: string }>;
 }
 
 export interface ImportedHotkey {
@@ -127,6 +129,22 @@ export interface VtsExpressionActivation {
   fadeTime: number;
 }
 
+export interface VtsArtMeshTintState {
+  artMeshColors: Record<string, { colorR: number; colorG: number; colorB: number; colorA: number }>;
+}
+
+export interface VtsPhysicsControl {
+  baseStrength: number;
+  baseWind: number;
+  groups: Record<string, { strengthMultiplier: number; windMultiplier: number }>;
+}
+
+export interface VtsModelMoveAnimation {
+  from: SceneTransform;
+  to: SceneTransform;
+  durationMs: number;
+}
+
 export interface DesktopStatus {
   port: number;
   connectedDevices: number;
@@ -144,6 +162,9 @@ export interface LumaStageBridge {
   onVtsHotkeyTrigger(listener: (hotkey: ImportedHotkey) => void): () => void;
   onVtsParameterInjection(listener: (injection: VtsParameterInjection) => void): () => void;
   onVtsExpressionActivation(listener: (activation: VtsExpressionActivation) => void): () => void;
+  onVtsArtMeshTint(listener: (state: VtsArtMeshTintState) => void): () => void;
+  onVtsPhysicsControl(listener: (state: VtsPhysicsControl) => void): () => void;
+  onVtsModelMove(listener: (move: VtsModelMoveAnimation) => void): () => void;
   onSceneWorkspaceChanged(listener: (workspace: SceneWorkspace) => void): () => void;
   importModel(): Promise<ImportedModel | null>;
   updateModelMappings(mappings: VTubeParameterMapping[]): Promise<ImportedModel>;
@@ -164,4 +185,5 @@ export interface LumaStageBridge {
   resolvePluginAuthorization(id: string, approved: boolean): Promise<boolean>;
   forgetPluginAccess(): Promise<boolean>;
   notifyLocalHotkey(hotkeyID: string): Promise<boolean>;
+  reportArtMeshes(modelDirectory: string, names: string[]): Promise<boolean>;
 }

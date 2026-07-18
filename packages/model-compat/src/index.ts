@@ -12,6 +12,19 @@ const motionReference = z.object({ File: referencedFile }).passthrough();
 const expression3Schema = z.object({
   Parameters: z.array(z.object({ Id: z.string().min(1).max(256), Value: z.number().finite() }).passthrough()).default([])
 }).passthrough();
+const userData3Schema = z.object({
+  UserData: z.array(z.object({
+    Target: z.string(),
+    Id: z.string(),
+    Value: z.string().default("")
+  }).passthrough()).default([])
+}).passthrough();
+const physics3Schema = z.object({
+  PhysicsSettings: z.array(z.object({
+    Id: z.string().min(1),
+    Name: z.string().nullish().transform((value) => value ?? "")
+  }).passthrough()).default([])
+}).passthrough();
 
 export const model3Schema = z.object({
   Version: z.number().int().min(3),
@@ -133,6 +146,8 @@ export interface CubismModelSummary {
   posePath?: string;
   displayInfoPath?: string;
   userDataPath?: string;
+  artMeshTags: Record<string, string[]>;
+  physicsGroups: Array<{ id: string; name: string }>;
   expressions: Array<{ name: string; path: string; parameters: Array<{ name: string; value: number }> }>;
   motionGroups: Record<string, string[]>;
   eyeBlinkParameters: string[];
@@ -201,7 +216,29 @@ export async function inspectCubismModelFolder(directory: string): Promise<Cubis
   }));
   const motionGroups = Object.fromEntries(Object.entries(refs.Motions).map(([group, motions]) => [group, motions.map((motion) => safeAssetPath(root, motion.File))]));
   const optional = (path?: string) => path ? safeAssetPath(root, path) : undefined;
-  const allPaths = [mocPath, ...texturePaths, ...expressions.map((item) => item.path), ...Object.values(motionGroups).flat(), optional(refs.Physics), optional(refs.Pose), optional(refs.DisplayInfo), optional(refs.UserData)].filter((path): path is string => Boolean(path));
+  const userDataPath = optional(refs.UserData);
+  const physicsPath = optional(refs.Physics);
+  let artMeshTags: Record<string, string[]> = {};
+  let physicsGroups: Array<{ id: string; name: string }> = [];
+  if (userDataPath && await exists(userDataPath)) {
+    try {
+      const parsed = userData3Schema.parse(JSON.parse(await readFile(userDataPath, "utf8")));
+      artMeshTags = Object.fromEntries(parsed.UserData.filter((entry) => entry.Target.toLowerCase() === "artmesh").map((entry) => [
+        entry.Id, [...new Set(entry.Value.split(/\s+/u).filter(Boolean))]
+      ]));
+    } catch {
+      // Invalid optional user data must not prevent an otherwise valid model from loading.
+    }
+  }
+  if (physicsPath && await exists(physicsPath)) {
+    try {
+      const parsed = physics3Schema.parse(JSON.parse(await readFile(physicsPath, "utf8")));
+      physicsGroups = parsed.PhysicsSettings.map((group) => ({ id: group.Id, name: group.Name }));
+    } catch {
+      // The renderer can still load models whose optional physics metadata is malformed.
+    }
+  }
+  const allPaths = [mocPath, ...texturePaths, ...expressions.map((item) => item.path), ...Object.values(motionGroups).flat(), physicsPath, optional(refs.Pose), optional(refs.DisplayInfo), userDataPath].filter((path): path is string => Boolean(path));
   const missingFiles = (await Promise.all(allPaths.map(async (path) => [path, await exists(path)] as const))).filter(([, present]) => !present).map(([path]) => relative(root, path));
   const groupIds = (name: string) => model.Groups.filter((group) => group.Target === "Parameter" && group.Name === name).flatMap((group) => group.Ids);
   const vTubeEntries = entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(VTUBE_SETUP_SUFFIX));
@@ -241,10 +278,12 @@ export async function inspectCubismModelFolder(directory: string): Promise<Cubis
     version: model.Version,
     mocPath,
     texturePaths,
-    physicsPath: optional(refs.Physics),
+    physicsPath,
     posePath: optional(refs.Pose),
     displayInfoPath: optional(refs.DisplayInfo),
-    userDataPath: optional(refs.UserData),
+    userDataPath,
+    artMeshTags,
+    physicsGroups,
     expressions,
     motionGroups,
     eyeBlinkParameters: groupIds("EyeBlink"),

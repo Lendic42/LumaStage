@@ -39,7 +39,7 @@ The desktop listens on TCP port `39510` and advertises `_lumastage._tcp` through
 
 ## Enable Cubism rendering
 
-LumaStage does not redistribute the proprietary Live2D Cubism Core. Download the official **Cubism SDK for Web** from Live2D after reading and accepting its terms. In LumaStage, choose **Install official Cubism Core** and select `live2dcubismcore.min.js` from that SDK. The file is copied into the application's private user-data directory and is never committed to this repository.
+LumaStage does not redistribute the proprietary Live2D Cubism Core. When Core is missing, the model panel shows **Install Cubism Core automatically**. After explicit license confirmation, LumaStage downloads only `live2dcubismcore.min.js` from Live2D's official `cubism.live2d.com` host, validates it and stores it in the application's private user-data directory. If the official download is unavailable, the same flow can open Live2D's SDK page or install the file from a previously downloaded **Cubism SDK for Web** package. The proprietary file is never committed to this repository.
 
 After that, import a folder containing one `*.model3.json`. LumaStage serves model assets through a sandboxed read-only protocol, renders physics/pose/expressions/motions through the Cubism adapter and applies either:
 
@@ -65,6 +65,9 @@ LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`
 - `APIStateRequest`, `AuthenticationTokenRequest` and `AuthenticationRequest`;
 - `StatisticsRequest`, `CurrentModelRequest` and `FaceFoundRequest`;
 - `AvailableModelsRequest` and `ModelLoadRequest`, including unloading with an empty model ID. Imported models remain in a private persistent library even when no scene currently uses them.
+- `MoveModelRequest` with absolute/relative transforms, the official ranges and timed renderer interpolation;
+- `ArtMeshListRequest` and `ColorTintRequest`, using drawable IDs reported by the loaded Cubism model, case-insensitive name/tag matchers and session cleanup;
+- `GetCurrentModelPhysicsRequest` and temporary, single-plugin `SetCurrentModelPhysicsRequest` base/group overrides with expiry and disconnect cleanup;
 - `HotkeysInCurrentModelRequest` and `HotkeyTriggerRequest` for imported expression/motion hotkeys;
 - `ExpressionStateRequest` and `ExpressionActivationRequest`, including expression parameter details parsed from `*.exp3.json`;
 - `InputParameterListRequest`, `ParameterValueRequest`, `Live2DParameterListRequest` and one-second `InjectParameterDataRequest` overrides with `set`/`add` modes and weights.
