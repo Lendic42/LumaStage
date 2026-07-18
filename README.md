@@ -144,9 +144,6 @@ Live2D Cubism Core, модели и чужие ассеты — по своим 
 
 ---
 
-
----
-
 ## ⭐ Star History
 
 <a href="https://star-history.com/#Lendic42/LumaStage&Date">

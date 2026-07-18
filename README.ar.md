@@ -148,9 +148,6 @@ Live2D Cubism Core والنماذج وأصول الطرف الثالث لها ر
 
 ---
 
-
----
-
 ## ⭐ Star History
 
 <a href="https://star-history.com/#Lendic42/LumaStage&Date">

@@ -144,9 +144,6 @@ See `THIRD_PARTY_NOTICES.md` and [docs/compatibility.md](docs/compatibility.md).
 
 ---
 
-
----
-
 ## ⭐ Star History
 
 <a href="https://star-history.com/#Lendic42/LumaStage&Date">

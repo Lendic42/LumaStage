@@ -144,9 +144,6 @@ Live2D Cubism Core、模型与第三方资源遵循各自许可。
 
 ---
 
-
----
-
 ## ⭐ Star History
 
 <a href="https://star-history.com/#Lendic42/LumaStage&Date">
