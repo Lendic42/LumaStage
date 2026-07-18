@@ -230,6 +230,8 @@ export interface DesktopStatus {
   vtsApiPort: number;
   vtsApiActive: boolean;
   allowedPlugins: number;
+  /** Reachable IPv4 addresses for manual tracker connect (Wi‑Fi / Ethernet / USB tether). */
+  hostAddresses: string[];
 }
 
 export interface LumaStageBridge {

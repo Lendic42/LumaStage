@@ -49,7 +49,7 @@ The renderer boundary is an adapter rather than a direct dependency on one model
 
 ## iPhone
 
-The tracker uses `ARFaceTrackingConfiguration`, so it requires an iPhone or iPad with a TrueDepth front camera. `ARFaceAnchor` supplies head transform, eye transforms and ARKit blend-shape coefficients. Network discovery uses Bonjour and transport uses a local WebSocket.
+The tracker uses `ARFaceTrackingConfiguration`, so it requires an iPhone or iPad with a TrueDepth front camera. `ARFaceAnchor` supplies head transform, eye transforms and ARKit blend-shape coefficients. Network discovery uses Bonjour (`_lumastage._tcp`); when mDNS fails (common on Windows), the tracker also accepts **manual host + port** (Wi‑Fi, Ethernet, or USB Personal Hotspot). Transport is a local WebSocket on port `39510` (all interfaces).
 
 ## LumaLink v1
 

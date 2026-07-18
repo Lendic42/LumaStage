@@ -100,7 +100,11 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .hint { display: flex; align-items: center; gap: 13px; }.hint > div { min-width: 35px; height: 35px; display: grid; place-items: center; border-radius: 10px; background: #5e50c522; color: #9d8dff; }.hint p { margin: 0; }.hint b { color: #ccd0e2; }.error { color: #ff7892 !important; }
 .hint strong { color: #aef4d8; font-size: 15px; letter-spacing: .16em; white-space: nowrap; }
 .trust-reset { display: block; margin-top: 7px; padding: 0; border: 0; background: transparent; color: #777d98; font-size: 9px; text-decoration: underline; cursor: pointer; }
-.hint code { color: #aeb4ce; font-size: 10px; }
+.hint code { display: inline-block; margin-top: 6px; color: #aef4d8; font-size: 11px; word-break: break-all; }
+.hint-note { display: block; margin-top: 7px; color: #6f758f; font-size: 10px; line-height: 1.45; }
+.setting-hosts { margin: 8px 0 0; color: #8a90aa; font-size: 11px; line-height: 1.45; }
+.setting-hosts code { color: #aef4d8; word-break: break-all; }
+.setting-note { margin: 8px 0 0; color: #6f758f; font-size: 10px; line-height: 1.45; }
 .error-toast { position: fixed; z-index: 80; right: 24px; bottom: 24px; width: min(430px, calc(100vw - 48px)); padding: 14px 42px 14px 16px; border: 1px solid #ff789255; border-radius: 13px; background: #29131dee; color: #ffc2cd; box-shadow: 0 18px 60px #0009; font-size: 11px; line-height: 1.45; }
 .error-toast button { position: absolute; top: 8px; right: 9px; border: 0; background: transparent; color: #d78b9a; cursor: pointer; }
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; background: #05060bc7; backdrop-filter: blur(14px); }

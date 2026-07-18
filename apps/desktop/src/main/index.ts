@@ -1,6 +1,8 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, net, protocol, session, shell } from "electron";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { execFile } from "node:child_process";
+import { networkInterfaces } from "node:os";
 import { basename, isAbsolute, relative, resolve, sep, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import Bonjour from "bonjour-service";
@@ -1295,6 +1297,39 @@ function sendModelMovedEvent(): void {
   sendVtsEvent("ModelMovedEvent", { modelID: activeApiModel.modelID, modelName: activeApiModel.modelName, modelPosition: currentModelPosition() });
 }
 
+function listHostAddresses(): string[] {
+  const addresses = new Set<string>();
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.internal || entry.family !== "IPv4") continue;
+      addresses.add(entry.address);
+    }
+  }
+  return [...addresses].sort((a, b) => {
+    const rank = (ip: string): number => {
+      if (ip.startsWith("192.168.")) return 0;
+      if (ip.startsWith("10.")) return 1;
+      if (ip.startsWith("172.")) return 2;
+      if (ip.startsWith("169.254.")) return 4;
+      return 3;
+    };
+    return rank(a) - rank(b) || a.localeCompare(b);
+  });
+}
+
+function ensureWindowsFirewallRule(): void {
+  if (process.platform !== "win32") return;
+  const ruleName = "LumaStage Tracker";
+  execFile("netsh", ["advfirewall", "firewall", "show", "rule", `name=${ruleName}`], (showError) => {
+    if (!showError) return;
+    execFile(
+      "netsh",
+      ["advfirewall", "firewall", "add", "rule", `name=${ruleName}`, "dir=in", "action=allow", "protocol=TCP", `localport=${TRACKING_PORT}`, "profile=any"],
+      () => { /* requires elevation; manual allow remains documented in UI */ }
+    );
+  });
+}
+
 function desktopStatus(): DesktopStatus {
   return {
     port: TRACKING_PORT,
@@ -1303,7 +1338,8 @@ function desktopStatus(): DesktopStatus {
     trustedDevices: trustedDevices.size,
     vtsApiPort: VTS_API_PORT,
     vtsApiActive,
-    allowedPlugins: pluginTokens.size
+    allowedPlugins: pluginTokens.size,
+    hostAddresses: listHostAddresses()
   };
 }
 
@@ -1324,7 +1360,8 @@ function acceptFrame(socket: WebSocket, frame: TrackingFrame): void {
 }
 
 function startTrackingServer(): void {
-  server = new WebSocketServer({ port: TRACKING_PORT, maxPayload: 64 * 1024 });
+  // Listen on all interfaces so Wi‑Fi, Ethernet, and USB-tether adapters can reach the tracker port.
+  server = new WebSocketServer({ host: "0.0.0.0", port: TRACKING_PORT, maxPayload: 64 * 1024 });
   server.on("connection", (socket) => {
     socket.on("message", async (raw, isBinary) => {
       if (isBinary) return socket.close(1003, "Text frames only");
@@ -1353,14 +1390,20 @@ function startTrackingServer(): void {
     });
   });
 
-  bonjour = new Bonjour();
-  service = bonjour.publish({
-    name: `LumaStage on ${process.env.COMPUTERNAME ?? process.env.HOSTNAME ?? "Desktop"}`,
-    type: "lumastage",
-    protocol: "tcp",
-    port: TRACKING_PORT,
-    txt: { protocol: "1", app: app.getVersion() }
-  });
+  ensureWindowsFirewallRule();
+
+  try {
+    bonjour = new Bonjour();
+    service = bonjour.publish({
+      name: `LumaStage on ${process.env.COMPUTERNAME ?? process.env.HOSTNAME ?? "Desktop"}`,
+      type: "lumastage",
+      protocol: "tcp",
+      port: TRACKING_PORT,
+      txt: { protocol: "1", app: app.getVersion() }
+    });
+  } catch (error) {
+    console.warn("[LumaStage] Bonjour advertise failed (manual IP still works):", error);
+  }
 }
 
 function startVtsApiServer(): void {

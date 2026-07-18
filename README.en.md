@@ -76,10 +76,11 @@ The IPA is **unsigned**. Install with Feather / AltStore / Sideloadly / TrollSto
 1. ⬇️ Download `LumaStage-Tracker-0.1.0-unsigned.ipa` from the release  
 2. ✍️ Sign and install on a Face ID iPhone  
 3. 🖥️ Start Desktop and pair with the **6-digit code**  
-4. 📶 Keep both devices on the same Wi‑Fi  
+4. 📶 Same Wi‑Fi **or** manual IP from Connect Tracker **or** USB (Personal Hotspot over cable + PC IP)  
 
 > 🔑 First connection: code on desktop → confirm on iPhone.  
-> After that a local device token is stored.
+> After that a local device token is stored.  
+> 🪟 On **Windows**, Bonjour discovery often fails — enter IP and port manually in the tracker. Allow TCP `39510` in the firewall if needed.
 
 ### 🖥️ Desktop
 
