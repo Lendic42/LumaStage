@@ -123,7 +123,10 @@ function App() {
     try { setOverlayMode(await window.lumastage.setOverlayMode(enabled)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
-  const triggerHotkey = (hotkey: ImportedHotkey) => setHotkeyRequest({ nonce: Date.now(), hotkey });
+  const triggerHotkey = (hotkey: ImportedHotkey) => {
+    setHotkeyRequest({ nonce: Date.now(), hotkey });
+    void window.lumastage.notifyLocalHotkey(hotkey.id);
+  };
   const resolvePluginRequest = async (approved: boolean) => {
     const request = pluginRequests[0];
     if (!request) return;

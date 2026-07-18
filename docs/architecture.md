@@ -16,6 +16,10 @@ Electron provides one Windows/macOS UI and a Chromium WebGL surface. The main pr
 
 The VTube Studio-compatible plugin API is a second WebSocket server bound only to `127.0.0.1:8001`. Its request/response core is isolated in `packages/vts-api` and tested independently. Authentication tokens are shown only once to an approved plugin; LumaStage persists SHA-256 hashes, requires a visible per-plugin approval and can revoke all plugin sessions from the UI.
 
+Event subscriptions are stored on each authenticated WebSocket session and disappear when it disconnects. The desktop publishes tracking-state, model, scene-background, model-transform and API-hotkey changes through the official event envelope; filters are evaluated before serialization to a client.
+
+Custom tracking parameters are owned by the plugin name/developer identity, persisted separately from authentication tokens and removed when plugin access is revoked. Private ownership keys are never returned in API parameter lists.
+
 Scene documents are validated by the isolated `packages/scene-core` package and persisted as a versioned JSON library in the application's user-data directory. Only the main process sees model/background paths. The renderer receives display metadata and fixed custom-protocol URLs for the active assets.
 
 The renderer boundary is an adapter rather than a direct dependency on one model engine:

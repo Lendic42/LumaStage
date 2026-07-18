@@ -13,7 +13,14 @@ export interface VtsApiSession {
   authenticated: boolean;
   pluginName?: string;
   pluginDeveloper?: string;
+  subscriptions?: Map<VtsEventName, Record<string, unknown>>;
 }
+
+export const supportedVtsEvents = [
+  "TestEvent", "ModelLoadedEvent", "TrackingStatusChangedEvent", "BackgroundChangedEvent",
+  "ModelConfigChangedEvent", "ModelMovedEvent", "HotkeyTriggeredEvent", "ItemEvent"
+] as const;
+export type VtsEventName = typeof supportedVtsEvents[number];
 
 export interface VtsHotkey {
   name: string;
@@ -53,6 +60,14 @@ export interface VtsInjectedParameter {
   weight?: number;
 }
 
+export interface VtsCustomParameterDefinition {
+  parameterName: string;
+  explanation: string;
+  min: number;
+  max: number;
+  defaultValue: number;
+}
+
 export interface VtsApiHost {
   version: string;
   startedAt: number;
@@ -61,11 +76,14 @@ export interface VtsApiHost {
   requestToken(pluginName: string, pluginDeveloper: string, pluginIcon?: string): Promise<string | undefined>;
   authenticate(pluginName: string, pluginDeveloper: string, token: string): Promise<boolean>;
   currentModel(): VtsCurrentModel | undefined;
+  modelPosition(): { positionX: number; positionY: number; rotation: number; size: number };
   faceFound(): boolean;
   triggerHotkey(hotkeyIDOrName: string): Promise<string | undefined>;
   inputParameters(): { defaultParameters: VtsParameter[]; customParameters: VtsParameter[] };
   live2DParameters(): VtsParameter[];
   injectParameterData(parameters: VtsInjectedParameter[], mode: "set" | "add", faceFound?: boolean): Promise<string[]>;
+  createCustomParameter(pluginName: string, pluginDeveloper: string, parameter: VtsCustomParameterDefinition): Promise<"created" | "owned-by-other" | "limit">;
+  deleteCustomParameter(pluginName: string, pluginDeveloper: string, parameterName: string): Promise<"deleted" | "not-found" | "owned-by-other">;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -84,6 +102,72 @@ function objectData(data: unknown): Record<string, unknown> {
 
 function stringField(data: Record<string, unknown>, key: string): string | undefined {
   return typeof data[key] === "string" ? data[key] as string : undefined;
+}
+
+function subscriptions(session: VtsApiSession): Map<VtsEventName, Record<string, unknown>> {
+  session.subscriptions ??= new Map();
+  return session.subscriptions;
+}
+
+function stringArray(value: unknown, max = 64): string[] | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > max || value.some((item) => typeof item !== "string" || item.length > 256)) return undefined;
+  return value as string[];
+}
+
+function validatedEventConfig(eventName: VtsEventName, value: unknown): Record<string, unknown> | undefined {
+  const config = objectData(value);
+  if (eventName === "TestEvent") {
+    const message = config.testMessageForEvent;
+    if (message !== undefined && (typeof message !== "string" || message.length > 32)) return undefined;
+    return message === undefined ? {} : { testMessageForEvent: message };
+  }
+  if (eventName === "ModelLoadedEvent") {
+    const modelID = stringArray(config.modelID);
+    return modelID ? { modelID } : undefined;
+  }
+  if (eventName === "HotkeyTriggeredEvent") {
+    if (config.onlyForAction !== undefined && typeof config.onlyForAction !== "string") return undefined;
+    if (config.ignoreHotkeysTriggeredByAPI !== undefined && typeof config.ignoreHotkeysTriggeredByAPI !== "boolean") return undefined;
+    return {
+      onlyForAction: typeof config.onlyForAction === "string" ? config.onlyForAction : "",
+      ignoreHotkeysTriggeredByAPI: config.ignoreHotkeysTriggeredByAPI === true
+    };
+  }
+  if (eventName === "ItemEvent") {
+    const itemInstanceIDs = stringArray(config.itemInstanceIDs);
+    const itemFileNames = stringArray(config.itemFileNames);
+    return itemInstanceIDs && itemFileNames ? { itemInstanceIDs, itemFileNames } : undefined;
+  }
+  return {};
+}
+
+export function vtsSessionAcceptsEvent(session: VtsApiSession, eventName: VtsEventName, data: Record<string, unknown>): boolean {
+  const config = session.subscriptions?.get(eventName);
+  if (!session.authenticated || !config) return false;
+  if (eventName === "ModelLoadedEvent") {
+    const filters = config.modelID as string[] | undefined;
+    return !filters?.length || filters.includes(String(data.modelID ?? ""));
+  }
+  if (eventName === "HotkeyTriggeredEvent") {
+    if (config.ignoreHotkeysTriggeredByAPI === true && data.hotkeyTriggeredByAPI === true) return false;
+    const only = config.onlyForAction;
+    return typeof only !== "string" || !only || only === data.hotkeyAction;
+  }
+  if (eventName === "ItemEvent") {
+    const ids = config.itemInstanceIDs as string[] | undefined;
+    const files = config.itemFileNames as string[] | undefined;
+    if (!ids?.length && !files?.length) return true;
+    const idMatches = ids?.includes(String(data.itemInstanceID ?? "")) ?? false;
+    const fileName = String(data.itemFileName ?? "");
+    const fileMatches = files?.some((fragment) => fileName.includes(fragment)) ?? false;
+    return idMatches || fileMatches;
+  }
+  return true;
+}
+
+export function createVtsEventMessage(eventName: VtsEventName, data: Record<string, unknown>): JsonObject {
+  return response(eventName, randomUUID(), data);
 }
 
 export async function handleVtsApiRequest(raw: string, session: VtsApiSession, host: VtsApiHost): Promise<JsonObject> {
@@ -128,6 +212,8 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
     if (session.authenticated) {
       session.pluginName = pluginName;
       session.pluginDeveloper = pluginDeveloper;
+    } else {
+      session.subscriptions?.clear();
     }
     return response("AuthenticationResponse", requestID, {
       authenticated: session.authenticated,
@@ -136,6 +222,29 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
   }
 
   if (!session.authenticated) return error(requestID, 8, "This request requires authentication");
+
+  if (request.messageType === "EventSubscriptionRequest") {
+    if (typeof data.subscribe !== "boolean") return error(requestID, 800, "Event subscribe field must be a boolean");
+    const eventName = stringField(data, "eventName") ?? "";
+    const current = subscriptions(session);
+    if (!data.subscribe && !eventName) {
+      current.clear();
+    } else {
+      if (!(supportedVtsEvents as readonly string[]).includes(eventName)) return error(requestID, 801, `Unknown or unsupported event: ${eventName}`);
+      const typedName = eventName as VtsEventName;
+      if (data.subscribe) {
+        const config = validatedEventConfig(typedName, data.config);
+        if (!config) return error(requestID, 802, `Invalid config for event: ${eventName}`);
+        current.set(typedName, config);
+      } else {
+        current.delete(typedName);
+      }
+    }
+    return response("EventSubscriptionResponse", requestID, {
+      subscribedEventCount: current.size,
+      subscribedEvents: [...current.keys()]
+    });
+  }
 
   if (request.messageType === "StatisticsRequest") {
     return response("StatisticsResponse", requestID, {
@@ -167,7 +276,7 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
       hasPhysicsFile: model.hasPhysicsFile,
       numberOfTextures: model.numberOfTextures,
       textureResolution: model.textureResolution,
-      modelPosition: { positionX: 0, positionY: 0, rotation: 0, size: 0 }
+      modelPosition: host.modelPosition()
     } : {
       modelLoaded: false, modelName: "", modelID: "", vtsModelName: "", vtsModelIconName: "", live2DModelName: "",
       modelLoadTime: 0, timeSinceModelLoaded: 0, numberOfLive2DParameters: 0, numberOfLive2DArtmeshes: 0,
@@ -216,6 +325,35 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
       customParameters: parameters.customParameters,
       defaultParameters: parameters.defaultParameters
     });
+  }
+
+  if (request.messageType === "ParameterCreationRequest") {
+    const parameterName = stringField(data, "parameterName");
+    const explanation = stringField(data, "explanation") ?? "";
+    if (!parameterName || !/^[A-Za-z0-9]{4,32}$/.test(parameterName)) return error(requestID, 400, "Parameter name must be 4-32 alphanumeric characters");
+    if (explanation.length > 256) return error(requestID, 401, "Parameter explanation is too long");
+    const min = data.min;
+    const max = data.max;
+    const defaultValue = data.defaultValue;
+    const validNumber = (value: unknown) => typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 1_000_000;
+    if (!validNumber(min) || !validNumber(max) || !validNumber(defaultValue) || (min as number) >= (max as number) || (defaultValue as number) < (min as number) || (defaultValue as number) > (max as number)) {
+      return error(requestID, 401, "Parameter min, max, or default value is invalid");
+    }
+    const result = await host.createCustomParameter(session.pluginName!, session.pluginDeveloper!, {
+      parameterName, explanation, min: min as number, max: max as number, defaultValue: defaultValue as number
+    });
+    if (result === "owned-by-other") return error(requestID, 402, "A parameter with this name belongs to another plugin");
+    if (result === "limit") return error(requestID, 403, "Custom parameter limit reached");
+    return response("ParameterCreationResponse", requestID, { parameterName });
+  }
+
+  if (request.messageType === "ParameterDeletionRequest") {
+    const parameterName = stringField(data, "parameterName");
+    if (!parameterName) return error(requestID, 410, "Parameter name is missing");
+    const result = await host.deleteCustomParameter(session.pluginName!, session.pluginDeveloper!, parameterName);
+    if (result === "not-found") return error(requestID, 411, "Custom parameter was not found");
+    if (result === "owned-by-other") return error(requestID, 412, "Custom parameter belongs to another plugin");
+    return response("ParameterDeletionResponse", requestID, { parameterName });
   }
 
   if (request.messageType === "ParameterValueRequest") {

@@ -8,7 +8,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
 import { inspectCubismModelFolder } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import { handleVtsApiRequest, type VtsApiHost, type VtsApiSession, type VtsCurrentModel, type VtsParameter } from "@lumastage/vts-api";
+import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsParameter } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, normalizeSceneTransform, parseSceneLibrary, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
 import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
 
@@ -18,8 +18,13 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-background", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
 ]);
 
-const TRACKING_PORT = 39510;
-const VTS_API_PORT = 8001;
+function configuredPort(environmentName: string, fallback: number): number {
+  const candidate = Number(process.env[environmentName]);
+  return Number.isInteger(candidate) && candidate >= 1024 && candidate <= 65535 ? candidate : fallback;
+}
+
+const TRACKING_PORT = configuredPort("LUMASTAGE_TRACKING_PORT", 39510);
+const VTS_API_PORT = configuredPort("LUMASTAGE_VTS_API_PORT", 8001);
 const pairingCode = String(randomInt(0, 1_000_000)).padStart(6, "0");
 interface ClientSession {
   hello: HelloMessage;
@@ -40,10 +45,15 @@ let injectedFaceFound: { value: boolean; expiresAt: number } | undefined;
 const injectedInputs = new Map<string, { value: number; weight: number; mode: "set" | "add"; expiresAt: number }>();
 const trustedDevices = new Map<string, string>();
 const pluginTokens = new Map<string, string>();
+interface StoredCustomParameter extends VtsParameter { ownerKey: string; explanation: string }
+const customParameters = new Map<string, StoredCustomParameter>();
+let customParameterSaveQueue: Promise<void> = Promise.resolve();
 const pluginSessions = new Map<WebSocket, VtsApiSession>();
 const pendingPluginApprovals = new Map<string, { resolve(approved: boolean): void; timeout: NodeJS.Timeout }>();
 let vtsApiServer: WebSocketServer | undefined;
 let vtsApiActive = false;
+let testEventTimer: NodeJS.Timeout | undefined;
+const vtsStartedAt = Date.now();
 
 function trustedDevicesPath(): string {
   return join(app.getPath("userData"), "trusted-devices.json");
@@ -51,6 +61,59 @@ function trustedDevicesPath(): string {
 
 function pluginAccessPath(): string {
   return join(app.getPath("userData"), "plugin-api-access.json");
+}
+
+function customParametersPath(): string {
+  return join(app.getPath("userData"), "custom-parameters.json");
+}
+
+function saveCustomParameters(): Promise<void> {
+  const payload = `${JSON.stringify(Object.fromEntries(customParameters), null, 2)}\n`;
+  const operation = customParameterSaveQueue.catch(() => undefined).then(async () => {
+    await mkdir(app.getPath("userData"), { recursive: true });
+    await writeFile(customParametersPath(), payload, { encoding: "utf8", mode: 0o600 });
+  });
+  customParameterSaveQueue = operation;
+  return operation;
+}
+
+async function loadCustomParameters(): Promise<void> {
+  try {
+    const parsed = JSON.parse(await readFile(customParametersPath(), "utf8")) as Record<string, unknown>;
+    for (const [name, value] of Object.entries(parsed)) {
+      if (!/^[A-Za-z0-9]{4,32}$/.test(name) || !value || typeof value !== "object") continue;
+      const item = value as Record<string, unknown>;
+      if (typeof item.ownerKey !== "string" || typeof item.addedBy !== "string" || typeof item.explanation !== "string") continue;
+      if (![item.min, item.max, item.defaultValue].every((number) => typeof number === "number" && Number.isFinite(number))) continue;
+      customParameters.set(name, { name, ownerKey: item.ownerKey, addedBy: item.addedBy, explanation: item.explanation, min: item.min as number, max: item.max as number, defaultValue: item.defaultValue as number, value: item.defaultValue as number });
+    }
+  } catch {
+    // First launch or invalid custom parameter registry.
+  }
+}
+
+async function createCustomParameter(pluginName: string, pluginDeveloper: string, parameter: VtsCustomParameterDefinition): Promise<"created" | "owned-by-other" | "limit"> {
+  const ownerKey = pluginKey(pluginName, pluginDeveloper);
+  const existing = customParameters.get(parameter.parameterName);
+  if (existing && existing.ownerKey !== ownerKey) return "owned-by-other";
+  const ownedCount = [...customParameters.values()].filter((item) => item.ownerKey === ownerKey).length;
+  if (!existing && (customParameters.size >= 300 || ownedCount >= 100)) return "limit";
+  customParameters.set(parameter.parameterName, {
+    name: parameter.parameterName, ownerKey, addedBy: pluginName, explanation: parameter.explanation,
+    min: parameter.min, max: parameter.max, defaultValue: parameter.defaultValue, value: parameter.defaultValue
+  });
+  await saveCustomParameters();
+  return "created";
+}
+
+async function deleteCustomParameter(pluginName: string, pluginDeveloper: string, parameterName: string): Promise<"deleted" | "not-found" | "owned-by-other"> {
+  const existing = customParameters.get(parameterName);
+  if (!existing) return "not-found";
+  if (existing.ownerKey !== pluginKey(pluginName, pluginDeveloper)) return "owned-by-other";
+  customParameters.delete(parameterName);
+  injectedInputs.delete(parameterName);
+  await saveCustomParameters();
+  return "deleted";
 }
 
 function scenesPath(): string {
@@ -160,7 +223,10 @@ const defaultVtsParameterDefinitions: Array<Omit<VtsParameter, "value" | "addedB
 ];
 
 function currentVtsInputs(now = Date.now()): Record<string, number> {
-  const defaults = Object.fromEntries(defaultVtsParameterDefinitions.map((parameter) => [parameter.name, parameter.defaultValue]));
+  const defaults = Object.fromEntries([
+    ...defaultVtsParameterDefinitions.map((parameter) => [parameter.name, parameter.defaultValue] as const),
+    ...[...customParameters.values()].map((parameter) => [parameter.name, parameter.defaultValue] as const)
+  ]);
   const values = latestTrackingFrame ? { ...defaults, ...mapARKitToVTubeInputs(latestTrackingFrame) } : defaults;
   for (const [id, injected] of injectedInputs) {
     if (injected.expiresAt < now) {
@@ -177,9 +243,14 @@ function inputParameterLists(): { defaultParameters: VtsParameter[]; customParam
   const values = currentVtsInputs();
   const defaultNames = new Set(defaultVtsParameterDefinitions.map((parameter) => parameter.name));
   const defaultParameters = defaultVtsParameterDefinitions.map((parameter) => ({ ...parameter, addedBy: "VTube Studio", value: values[parameter.name] }));
-  const customNames = new Set((activeImportedModel?.vTubeParameterMappings ?? []).map((mapping) => mapping.input).filter((name) => !defaultNames.has(name)));
-  const customParameters = [...customNames].map((name) => ({ name, addedBy: "LumaStage model mapping", value: values[name] ?? 0, min: -1_000_000, max: 1_000_000, defaultValue: 0 }));
-  return { defaultParameters, customParameters };
+  const registered = [...customParameters.values()].map((parameter) => ({
+    name: parameter.name, addedBy: parameter.addedBy, value: values[parameter.name] ?? parameter.defaultValue,
+    min: parameter.min, max: parameter.max, defaultValue: parameter.defaultValue
+  }));
+  const registeredNames = new Set(registered.map((parameter) => parameter.name));
+  const mappedNames = new Set((activeImportedModel?.vTubeParameterMappings ?? []).map((mapping) => mapping.input).filter((name) => !defaultNames.has(name) && !registeredNames.has(name)));
+  const mapped = [...mappedNames].map((name) => ({ name, addedBy: "LumaStage model mapping", value: values[name] ?? 0, min: -1_000_000, max: 1_000_000, defaultValue: 0 }));
+  return { defaultParameters, customParameters: [...registered, ...mapped] };
 }
 
 function live2DParameterList(): VtsParameter[] {
@@ -362,6 +433,39 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+function currentModelPosition(): { positionX: number; positionY: number; rotation: number; size: number } {
+  const transform = storedActiveScene().transform;
+  return {
+    positionX: transform.positionX,
+    positionY: -transform.positionY,
+    rotation: transform.rotation < 0 ? transform.rotation + 360 : transform.rotation,
+    size: Math.max(-100, Math.min(100, (transform.scale - 1) * 50))
+  };
+}
+
+function sendVtsEvent(eventName: VtsEventName, data: Record<string, unknown>): void {
+  const message = JSON.stringify(createVtsEventMessage(eventName, data));
+  for (const [socket, apiSession] of pluginSessions) {
+    if (socket.readyState === socket.OPEN && vtsSessionAcceptsEvent(apiSession, eventName, data)) socket.send(message);
+  }
+}
+
+function currentModelEventData(modelLoaded = Boolean(activeApiModel)): Record<string, unknown> {
+  return { modelLoaded, modelName: activeApiModel?.modelName ?? "", modelID: activeApiModel?.modelID ?? "" };
+}
+
+function hotkeyEventData(hotkey: { hotkeyID: string; name: string; type: string; file: string }, triggeredByAPI: boolean): Record<string, unknown> {
+  return {
+    hotkeyID: hotkey.hotkeyID, hotkeyName: hotkey.name, hotkeyAction: hotkey.type, hotkeyFile: hotkey.file,
+    hotkeyTriggeredByAPI: triggeredByAPI, modelID: activeApiModel?.modelID ?? "", modelName: activeApiModel?.modelName ?? "", isLive2DItem: false
+  };
+}
+
+function sendModelMovedEvent(): void {
+  if (!activeApiModel) return;
+  sendVtsEvent("ModelMovedEvent", { modelID: activeApiModel.modelID, modelName: activeApiModel.modelName, modelPosition: currentModelPosition() });
+}
+
 function publishStatus(): void {
   const status: DesktopStatus = {
     port: TRACKING_PORT,
@@ -379,7 +483,11 @@ function acceptFrame(socket: WebSocket, frame: TrackingFrame): void {
   const client = clients.get(socket);
   if (!client || frame.sequence <= client.lastSequence) return;
   client.lastSequence = frame.sequence;
+  const previousFaceFound = latestTrackingFrame?.faceFound;
   latestTrackingFrame = frame;
+  if (previousFaceFound !== undefined && previousFaceFound !== frame.faceFound) {
+    sendVtsEvent("TrackingStatusChangedEvent", { faceFound: frame.faceFound, leftHandFound: false, rightHandFound: false });
+  }
   broadcast("tracking-frame", frame);
 }
 
@@ -426,7 +534,7 @@ function startTrackingServer(): void {
 function startVtsApiServer(): void {
   const host: VtsApiHost = {
     version: app.getVersion(),
-    startedAt: Date.now(),
+    startedAt: vtsStartedAt,
     allowedPluginCount: () => pluginTokens.size,
     connectedPluginCount: () => [...pluginSessions.values()].filter((session) => session.authenticated).length,
     requestToken: issuePluginToken,
@@ -435,6 +543,7 @@ function startVtsApiServer(): void {
       return Boolean(storedHash && hashesMatch(hashToken(token), storedHash));
     },
     currentModel: () => activeApiModel,
+    modelPosition: currentModelPosition,
     faceFound: () => injectedFaceFound && injectedFaceFound.expiresAt >= Date.now() ? injectedFaceFound.value : latestTrackingFrame?.faceFound ?? false,
     triggerHotkey: async (hotkeyIDOrName) => {
       const hotkey = activeApiModel?.hotkeys.find((candidate) =>
@@ -443,6 +552,7 @@ function startVtsApiServer(): void {
       if (!hotkey) return undefined;
       const trigger: ImportedHotkey = { id: hotkey.hotkeyID, name: hotkey.name, action: hotkey.type, file: hotkey.file, folder: "" };
       broadcast("vts-hotkey-trigger", trigger);
+      sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, true));
       return hotkey.hotkeyID;
     },
     inputParameters: inputParameterLists,
@@ -450,6 +560,7 @@ function startVtsApiServer(): void {
     injectParameterData: async (parameters, mode, faceFound) => {
       const known = new Set([
         ...defaultVtsParameterDefinitions.map((parameter) => parameter.name),
+        ...customParameters.keys(),
         ...(activeImportedModel?.vTubeParameterMappings ?? []).map((mapping) => mapping.input)
       ]);
       const missing = parameters.filter((parameter) => !known.has(parameter.id)).map((parameter) => parameter.id);
@@ -462,7 +573,9 @@ function startVtsApiServer(): void {
       const injection: VtsParameterInjection = { parameters, mode, faceFound };
       broadcast("vts-parameter-injection", injection);
       return [];
-    }
+    },
+    createCustomParameter,
+    deleteCustomParameter
   };
 
   vtsApiServer = new WebSocketServer({ host: "127.0.0.1", port: VTS_API_PORT, maxPayload: 1024 * 1024 });
@@ -481,6 +594,17 @@ function startVtsApiServer(): void {
       try {
         const result = await handleVtsApiRequest(raw.toString("utf8"), apiSession, host);
         if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(result));
+        if (result.messageType === "EventSubscriptionResponse") {
+          try {
+            const request = JSON.parse(raw.toString("utf8")) as { data?: { eventName?: unknown; subscribe?: unknown } };
+            if (request.data?.eventName === "ModelMovedEvent" && request.data.subscribe === true && activeApiModel && socket.readyState === socket.OPEN) {
+              const data = { modelID: activeApiModel.modelID, modelName: activeApiModel.modelName, modelPosition: currentModelPosition() };
+              socket.send(JSON.stringify(createVtsEventMessage("ModelMovedEvent", data)));
+            }
+          } catch {
+            // The core already validated the request; event priming is best-effort.
+          }
+        }
         publishStatus();
       } catch (reason) {
         if (socket.readyState === socket.OPEN) {
@@ -496,6 +620,15 @@ function startVtsApiServer(): void {
       publishStatus();
     });
   });
+  testEventTimer = setInterval(() => {
+    const counter = Math.floor((Date.now() - vtsStartedAt) / 1000);
+    for (const [socket, apiSession] of pluginSessions) {
+      const config = apiSession.subscriptions?.get("TestEvent");
+      if (!config || socket.readyState !== socket.OPEN) continue;
+      const data = { yourTestMessage: typeof config.testMessageForEvent === "string" ? config.testMessageForEvent : "", counter };
+      if (vtsSessionAcceptsEvent(apiSession, "TestEvent", data)) socket.send(JSON.stringify(createVtsEventMessage("TestEvent", data)));
+    }
+  }, 1000);
 }
 
 async function inspectModelDirectory(directory: string): Promise<ImportedModel> {
@@ -580,11 +713,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("import-model", async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
     if (result.canceled || !result.filePaths[0]) return null;
+    const previousModel = activeApiModel;
     const model = await inspectModelDirectory(result.filePaths[0]);
     const active = storedActiveScene();
     active.modelDirectory = model.directory;
     active.modelName = model.vTubeModelName ?? model.name;
     await saveScenes();
+    if (previousModel && previousModel.modelID !== activeApiModel?.modelID) {
+      sendVtsEvent("ModelLoadedEvent", { modelLoaded: false, modelName: previousModel.modelName, modelID: previousModel.modelID });
+    }
+    sendVtsEvent("ModelLoadedEvent", currentModelEventData(true));
     return model;
   });
   ipcMain.handle("get-scene-workspace", () => sceneWorkspace());
@@ -592,6 +730,7 @@ app.whenReady().then(async () => {
     if (sceneLibrary.scenes.length >= 64) throw new Error("Scene limit reached");
     const id = randomUUID();
     const name = typeof requestedName === "string" && requestedName.trim() ? requestedName.trim().slice(0, 48) : `Scene ${sceneLibrary.scenes.length + 1}`;
+    const previousModel = activeApiModel;
     sceneLibrary.scenes.push({
       id,
       name,
@@ -602,18 +741,31 @@ app.whenReady().then(async () => {
     clearActiveModel();
     activeBackgroundPath = undefined;
     await saveScenes();
+    if (previousModel) sendVtsEvent("ModelLoadedEvent", { modelLoaded: false, modelName: previousModel.modelName, modelID: previousModel.modelID });
+    sendVtsEvent("BackgroundChangedEvent", { backgroundName: "studio" });
     return sceneWorkspace();
   });
   ipcMain.handle("activate-scene", async (_event, requestedId: unknown) => {
+    const previousModel = activeApiModel;
     sceneLibrary.activeSceneId = requireSceneId(requestedId);
     await saveScenes();
-    return sceneWorkspace(true);
+    const workspace = await sceneWorkspace(true);
+    if (previousModel && previousModel.modelID !== activeApiModel?.modelID) {
+      sendVtsEvent("ModelLoadedEvent", { modelLoaded: false, modelName: previousModel.modelName, modelID: previousModel.modelID });
+    }
+    if (activeApiModel && previousModel?.modelID !== activeApiModel.modelID) sendVtsEvent("ModelLoadedEvent", currentModelEventData(true));
+    const background = storedActiveScene().background;
+    sendVtsEvent("BackgroundChangedEvent", { backgroundName: background.kind === "image" ? basename(background.imagePath) : background.kind === "color" ? background.color : background.preset });
+    sendModelMovedEvent();
+    return workspace;
   });
   ipcMain.handle("update-scene", async (_event, requestedId: unknown, requestedUpdate: unknown) => {
     const id = requireSceneId(requestedId);
     if (!requestedUpdate || typeof requestedUpdate !== "object" || Array.isArray(requestedUpdate)) throw new Error("Invalid scene update");
     const update = requestedUpdate as SceneUpdate;
     const scene = sceneLibrary.scenes.find((item) => item.id === id)!;
+    const previousTransform = { ...scene.transform };
+    const previousBackground = JSON.stringify(scene.background);
     if (update.name !== undefined) {
       if (typeof update.name !== "string" || !update.name.trim()) throw new Error("Scene name cannot be empty");
       scene.name = update.name.trim().slice(0, 48);
@@ -627,6 +779,10 @@ app.whenReady().then(async () => {
       if (id === sceneLibrary.activeSceneId) activeBackgroundPath = undefined;
     }
     await saveScenes();
+    if (id === sceneLibrary.activeSceneId && JSON.stringify(scene.transform) !== JSON.stringify(previousTransform)) sendModelMovedEvent();
+    if (id === sceneLibrary.activeSceneId && JSON.stringify(scene.background) !== previousBackground) {
+      sendVtsEvent("BackgroundChangedEvent", { backgroundName: scene.background.kind === "image" ? basename(scene.background.imagePath) : scene.background.kind === "color" ? scene.background.color : scene.background.preset });
+    }
     return sceneWorkspace();
   });
   ipcMain.handle("choose-scene-background", async (_event, requestedId: unknown) => {
@@ -644,16 +800,24 @@ app.whenReady().then(async () => {
     scene.background = { kind: "image", imagePath: await realpath(imagePath) };
     if (id === sceneLibrary.activeSceneId) activeBackgroundPath = scene.background.imagePath;
     await saveScenes();
+    if (id === sceneLibrary.activeSceneId) sendVtsEvent("BackgroundChangedEvent", { backgroundName: basename(scene.background.imagePath) });
     return sceneWorkspace();
   });
   ipcMain.handle("delete-scene", async (_event, requestedId: unknown) => {
     const id = requireSceneId(requestedId);
     if (sceneLibrary.scenes.length === 1) throw new Error("The last scene cannot be deleted");
     const deletingActive = id === sceneLibrary.activeSceneId;
+    const previousModel = deletingActive ? activeApiModel : undefined;
     sceneLibrary.scenes = sceneLibrary.scenes.filter((scene) => scene.id !== id);
     if (deletingActive) sceneLibrary.activeSceneId = sceneLibrary.scenes[0].id;
     await saveScenes();
-    return sceneWorkspace(deletingActive);
+    const workspace = await sceneWorkspace(deletingActive);
+    if (deletingActive && previousModel && previousModel.modelID !== activeApiModel?.modelID) {
+      sendVtsEvent("ModelLoadedEvent", { modelLoaded: false, modelName: previousModel.modelName, modelID: previousModel.modelID });
+    }
+    if (deletingActive && activeApiModel && previousModel?.modelID !== activeApiModel.modelID) sendVtsEvent("ModelLoadedEvent", currentModelEventData(true));
+    if (deletingActive) sendModelMovedEvent();
+    return workspace;
   });
   ipcMain.handle("cubism-core-status", coreStatus);
   ipcMain.handle("install-cubism-core", async () => {
@@ -705,11 +869,21 @@ app.whenReady().then(async () => {
         socket.close(1008, "Plugin access was revoked");
       }
     }
+    customParameters.clear();
+    injectedInputs.clear();
     await savePluginAccess();
+    await saveCustomParameters();
     publishStatus();
     return true;
   });
-  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadScenes()]);
+  ipcMain.handle("notify-local-hotkey", (_event, requestedHotkeyID: unknown) => {
+    if (typeof requestedHotkeyID !== "string") throw new Error("Hotkey ID must be a string");
+    const hotkey = activeApiModel?.hotkeys.find((candidate) => candidate.hotkeyID === requestedHotkeyID);
+    if (!hotkey) return false;
+    sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, false));
+    return true;
+  });
+  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadScenes()]);
   await loadActiveSceneModel();
   startTrackingServer();
   startVtsApiServer();
@@ -724,6 +898,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  if (testEventTimer) clearInterval(testEventTimer);
   service?.stop();
   bonjour?.destroy();
   server?.close();

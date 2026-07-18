@@ -40,7 +40,8 @@ const bridge: LumaStageBridge = {
   setOverlayMode: (enabled) => ipcRenderer.invoke("set-overlay-mode", enabled) as Promise<boolean>,
   forgetTrustedDevices: () => ipcRenderer.invoke("forget-trusted-devices") as Promise<boolean>,
   resolvePluginAuthorization: (id, approved) => ipcRenderer.invoke("resolve-plugin-authorization", id, approved) as Promise<boolean>,
-  forgetPluginAccess: () => ipcRenderer.invoke("forget-plugin-access") as Promise<boolean>
+  forgetPluginAccess: () => ipcRenderer.invoke("forget-plugin-access") as Promise<boolean>,
+  notifyLocalHotkey: (hotkeyID) => ipcRenderer.invoke("notify-local-hotkey", hotkeyID) as Promise<boolean>
 };
 
 contextBridge.exposeInMainWorld("lumastage", bridge);

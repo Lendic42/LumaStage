@@ -32,7 +32,9 @@ This preserves honest open-source licensing while still building real compatibil
 | VTube Studio plugin authentication/state/statistics | Compatible subset | Implemented and packaged-runtime tested on localhost:8001 |
 | Current model, face-found and model hotkey API | Compatible subset | Implemented; hotkeys limited to supported imported actions |
 | Input/Live2D parameter reads and timed parameter injection | Compatible subset | Implemented with set/add, weights and one-second expiry |
-| Remaining VTube Studio plugin API/events/items/custom-parameter creation | Incremental compatibility | Planned |
+| VTube Studio event subscriptions | Compatible subset | Implemented for test, model, tracking, background, movement, hotkey and item event types |
+| Custom tracking parameter creation/deletion | Compatible subset | Implemented with persistence, ownership, limits and revocation cleanup |
+| Remaining VTube Studio plugin API/items | Incremental compatibility | Planned |
 | Encrypted/locked models | Respect protection; no bypass | By design |
 
 ### VTube Studio sidecars

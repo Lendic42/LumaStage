@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handleVtsApiRequest, type VtsApiHost, type VtsApiSession } from "../src/index.js";
+import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession } from "../src/index.js";
 
 function request(messageType: string, data?: unknown): string {
   return JSON.stringify({ apiName: "VTubeStudioPublicAPI", apiVersion: "1.0", requestID: "test", messageType, data });
@@ -19,6 +19,7 @@ function host(): VtsApiHost {
       numberOfTextures: 2, textureResolution: 0,
       hotkeys: [{ name: "Smile", type: "ToggleExpression", file: "smile.exp3.json", hotkeyID: "smile" }]
     }),
+    modelPosition: () => ({ positionX: 0.1, positionY: -0.2, rotation: 12, size: 5 }),
     faceFound: () => true,
     triggerHotkey: async (id) => id.toLowerCase() === "smile" ? "smile" : undefined,
     inputParameters: () => ({
@@ -26,7 +27,9 @@ function host(): VtsApiHost {
       customParameters: []
     }),
     live2DParameters: () => [{ name: "ParamAngleX", value: 12, min: -30, max: 30, defaultValue: 0 }],
-    injectParameterData: async (parameters) => parameters.filter((parameter) => parameter.id === "Missing").map((parameter) => parameter.id)
+    injectParameterData: async (parameters) => parameters.filter((parameter) => parameter.id === "Missing").map((parameter) => parameter.id),
+    createCustomParameter: async (_name, _developer, parameter) => parameter.parameterName === "TakenParam" ? "owned-by-other" : "created",
+    deleteCustomParameter: async (_name, _developer, parameterName) => parameterName === "MyParam" ? "deleted" : "not-found"
   };
 }
 
@@ -86,5 +89,60 @@ describe("VTube Studio API compatibility core", () => {
       parameterValues: [{ id: "Missing", value: 1 }]
     }), session, host());
     expect((missing.data as Record<string, unknown>).errorID).toBe(453);
+  });
+
+  it("subscribes, replaces config, and unsubscribes event sessions", async () => {
+    const session: VtsApiSession = { authenticated: true };
+    const subscribed = await handleVtsApiRequest(request("EventSubscriptionRequest", {
+      eventName: "HotkeyTriggeredEvent", subscribe: true, config: { onlyForAction: "ToggleExpression", ignoreHotkeysTriggeredByAPI: true }
+    }), session, host());
+    expect(subscribed.messageType).toBe("EventSubscriptionResponse");
+    expect((subscribed.data as { subscribedEvents: string[] }).subscribedEvents).toEqual(["HotkeyTriggeredEvent"]);
+    expect(vtsSessionAcceptsEvent(session, "HotkeyTriggeredEvent", { hotkeyAction: "ToggleExpression", hotkeyTriggeredByAPI: false })).toBe(true);
+    expect(vtsSessionAcceptsEvent(session, "HotkeyTriggeredEvent", { hotkeyAction: "ToggleExpression", hotkeyTriggeredByAPI: true })).toBe(false);
+    await handleVtsApiRequest(request("EventSubscriptionRequest", { eventName: "HotkeyTriggeredEvent", subscribe: false }), session, host());
+    expect(session.subscriptions?.size).toBe(0);
+    await handleVtsApiRequest(request("EventSubscriptionRequest", { eventName: "TestEvent", subscribe: true }), session, host());
+    await handleVtsApiRequest(request("AuthenticationRequest", { pluginName: "Test Plugin", pluginDeveloper: "LumaStage Tests", authenticationToken: "wrong" }), session, host());
+    expect(session.subscriptions?.size).toBe(0);
+  });
+
+  it("validates event configs and emits the official event envelope", async () => {
+    const session: VtsApiSession = { authenticated: true };
+    const invalid = await handleVtsApiRequest(request("EventSubscriptionRequest", {
+      eventName: "TestEvent", subscribe: true, config: { testMessageForEvent: "x".repeat(33) }
+    }), session, host());
+    expect(invalid.messageType).toBe("APIError");
+    const event = createVtsEventMessage("TrackingStatusChangedEvent", { faceFound: true, leftHandFound: false, rightHandFound: false });
+    expect(event.messageType).toBe("TrackingStatusChangedEvent");
+    expect(event.apiName).toBe("VTubeStudioPublicAPI");
+  });
+
+  it("applies model and item event filters", async () => {
+    const session: VtsApiSession = { authenticated: true };
+    await handleVtsApiRequest(request("EventSubscriptionRequest", {
+      eventName: "ModelLoadedEvent", subscribe: true, config: { modelID: ["haru"] }
+    }), session, host());
+    await handleVtsApiRequest(request("EventSubscriptionRequest", {
+      eventName: "ItemEvent", subscribe: true, config: { itemInstanceIDs: ["one"], itemFileNames: ["hat"] }
+    }), session, host());
+    expect(vtsSessionAcceptsEvent(session, "ModelLoadedEvent", { modelID: "haru" })).toBe(true);
+    expect(vtsSessionAcceptsEvent(session, "ModelLoadedEvent", { modelID: "other" })).toBe(false);
+    expect(vtsSessionAcceptsEvent(session, "ItemEvent", { itemInstanceID: "two", itemFileName: "red-hat.png" })).toBe(true);
+    expect(vtsSessionAcceptsEvent(session, "ItemEvent", { itemInstanceID: "two", itemFileName: "glasses.png" })).toBe(false);
+  });
+
+  it("creates and deletes plugin-owned custom parameters", async () => {
+    const session: VtsApiSession = { authenticated: true, pluginName: "Test Plugin", pluginDeveloper: "LumaStage Tests" };
+    const created = await handleVtsApiRequest(request("ParameterCreationRequest", {
+      parameterName: "MyParam", explanation: "A test input", min: -1, max: 1, defaultValue: 0
+    }), session, host());
+    expect(created.messageType).toBe("ParameterCreationResponse");
+    const invalid = await handleVtsApiRequest(request("ParameterCreationRequest", {
+      parameterName: "bad name", min: -1, max: 1, defaultValue: 0
+    }), session, host());
+    expect(invalid.messageType).toBe("APIError");
+    const deleted = await handleVtsApiRequest(request("ParameterDeletionRequest", { parameterName: "MyParam" }), session, host());
+    expect(deleted.messageType).toBe("ParameterDeletionResponse");
   });
 });

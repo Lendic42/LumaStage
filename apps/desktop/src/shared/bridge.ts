@@ -121,4 +121,5 @@ export interface LumaStageBridge {
   forgetTrustedDevices(): Promise<boolean>;
   resolvePluginAuthorization(id: string, approved: boolean): Promise<boolean>;
   forgetPluginAccess(): Promise<boolean>;
+  notifyLocalHotkey(hotkeyID: string): Promise<boolean>;
 }
