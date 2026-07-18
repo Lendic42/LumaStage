@@ -281,7 +281,7 @@ function SettingsView({ coreStatus, coreInstalling, status, onInstallCore, onFor
       <article className="setting-card featured"><div className="setting-icon">◇</div><div><small>LIVE2D RENDERER</small><h3>{coreLabel}</h3><p>{coreStatus.available ? "Official Cubism Core is ready for compatible Live2D models." : "Install the official compatible Cubism Core directly from Live2D."}</p>{!coreStatus.available && <button className="hero-action" disabled={coreInstalling} onClick={onInstallCore}>{coreInstalling ? "Downloading from Live2D…" : coreStatus.installed ? "Replace with compatible Core" : "Install Cubism Core"}</button>}</div><span className={`status-badge${coreStatus.available ? " good" : " warn"}`}>{coreStatus.available ? "READY" : "ACTION"}</span></article>
       <article className="setting-card"><div className="setting-icon">⌁</div><div><small>IPHONE TRACKER</small><h3>Port {status.port}</h3><p>{status.connectedDevices} connected · {status.trustedDevices} paired device{status.trustedDevices === 1 ? "" : "s"}</p><p className="setting-hosts">Hosts: <code>{formatHostEndpoints(status)}</code></p><p className="setting-note">Windows: use the first IP (prefer 192.168.x). Set Ethernet/Wi-Fi network profile to Private. Allow TCP {status.port} in firewall. Pause VPN/tunnels (Tailscale/happ) if connect fails. USB: Personal Hotspot over cable, then use the PC address shown here.</p>{status.trustedDevices > 0 && <button className="text-action" onClick={onForgetTrackers}>Forget paired devices</button>}</div></article>
       <article className="setting-card"><div className="setting-icon">◫</div><div><small>VTS PLUGIN API</small><h3>127.0.0.1:{status.vtsApiPort}</h3><p>{status.vtsApiActive ? "Local compatibility API is active." : "The compatibility API is unavailable."} {status.allowedPlugins} allowed plugin{status.allowedPlugins === 1 ? "" : "s"}.</p>{status.allowedPlugins > 0 && <button className="text-action" onClick={onForgetPlugins}>Revoke plugin permissions</button>}</div><span className={`status-badge${status.vtsApiActive ? " good" : " warn"}`}>{status.vtsApiActive ? "ACTIVE" : "OFFLINE"}</span></article>
-      <article className="setting-card"><div className="setting-icon">↗</div><div><small>STREAM OUTPUT</small><h3>Transparent capture</h3><p>Use the Transparent button on Stage for a clean OBS or screen-capture source.</p></div></article>
+      <article className="setting-card"><div className="setting-icon">📷</div><div><small>STREAM OUTPUT</small><h3>Virtual webcam</h3><p>Virtual Cam sends only the character with a transparent background into a system camera device (Discord / Zoom / browser). Requires free Unity Capture driver once — not OBS. Overlay is a separate always-on-top window mode.</p></div></article>
     </section>
   </div>;
 }
@@ -297,6 +297,8 @@ function App() {
   const [coreInstalling, setCoreInstalling] = useState(false);
   const [calibrationNonce, setCalibrationNonce] = useState(0);
   const [overlayMode, setOverlayMode] = useState(false);
+  const [virtualCam, setVirtualCam] = useState(false);
+  const [virtualCamLabel, setVirtualCamLabel] = useState("Virtual Cam");
   const [hotkeyRequest, setHotkeyRequest] = useState<{ nonce: number; hotkey: ImportedHotkey } | null>(null);
   const [pluginRequests, setPluginRequests] = useState<PluginAuthorizationRequest[]>([]);
   const [parameterInjection, setParameterInjection] = useState<{ nonce: number; value: VtsParameterInjection } | null>(null);
@@ -423,6 +425,66 @@ function App() {
     try { setOverlayMode(await window.lumastage.setOverlayMode(enabled)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
+  const toggleVirtualCamera = async () => {
+    try {
+      const next = !virtualCam;
+      const status = await window.lumastage.setVirtualCamera(next);
+      setVirtualCam(status.active);
+      if (status.active) {
+        setVirtualCamLabel(status.deviceName ? `Cam: ${status.deviceName}` : "Virtual Cam ON");
+      } else if (status.error === "driver-missing") {
+        setVirtualCamLabel("Virtual Cam");
+        setError("Install free Unity Capture driver once, then enable Virtual Cam again.");
+      } else if (status.error) {
+        setVirtualCamLabel("Virtual Cam");
+        setError(status.error);
+      } else {
+        setVirtualCamLabel("Virtual Cam");
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+  useEffect(() => {
+    if (!virtualCam) return;
+    const targetW = 1280;
+    const targetH = 720;
+    const offscreen = document.createElement("canvas");
+    offscreen.width = targetW;
+    offscreen.height = targetH;
+    const ctx = offscreen.getContext("2d", { willReadFrequently: true, alpha: true });
+    if (!ctx) return;
+    let alive = true;
+    const push = () => {
+      if (!alive || !ctx) return;
+      // Character canvas only � transparent pixels where there is no model (not the stage background).
+      const src = document.querySelector(".stage canvas") as HTMLCanvasElement | null;
+      ctx.clearRect(0, 0, targetW, targetH);
+      if (src && src.width > 0 && src.height > 0) {
+        const scale = Math.min(targetW / src.width, targetH / src.height);
+        const dw = src.width * scale;
+        const dh = src.height * scale;
+        const dx = (targetW - dw) / 2;
+        const dy = (targetH - dh) / 2;
+        try {
+          ctx.drawImage(src, dx, dy, dw, dh);
+          const image = ctx.getImageData(0, 0, targetW, targetH);
+          void window.lumastage.pushVirtualCameraFrame({
+            width: targetW,
+            height: targetH,
+            rgba: image.data.buffer.slice(image.data.byteOffset, image.data.byteOffset + image.data.byteLength)
+          });
+        } catch {
+          // WebGL read can fail on some drivers; skip frame
+        }
+      }
+    };
+    const timer = window.setInterval(push, 1000 / 30);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [virtualCam]);
   const triggerHotkey = (hotkey: ImportedHotkey) => {
     setHotkeyRequest({ nonce: Date.now(), hotkey });
     void window.lumastage.notifyLocalHotkey(hotkey.id);
@@ -480,7 +542,7 @@ function App() {
       <header><div><small>{activeView === "stage" ? "LIVE WORKSPACE" : activeView === "models" ? "MODEL LIBRARY" : activeView === "tracking" ? "FACIAL CAPTURE" : activeView === "effects" ? "SCENE ATMOSPHERE" : "PREFERENCES"}</small><h1>{activeView[0].toUpperCase() + activeView.slice(1)}</h1></div><div className={`connection ${status.connectedDevices ? "online" : ""}`}><i />{connectionLabel}<span>:{status.port}</span></div></header>
       {activeView === "stage" && <div className="stage-grid">
         <section className="stage-card">
-          <div className="stage-toolbar"><span>{activeScene?.name ?? "Main Stage"} · {model?.name ?? "Preview avatar"}</span><div><button onClick={() => void updateActiveScene({ transform: neutralSceneTransform })}>⌖ Fit</button><button onClick={() => void toggleOverlay()}>{overlayMode ? "Exit overlay" : "▣ Transparent"}</button></div></div>
+          <div className="stage-toolbar"><span>{activeScene?.name ?? "Main Stage"} · {model?.name ?? "Preview avatar"}</span><div><button onClick={() => void updateActiveScene({ transform: neutralSceneTransform })}>⌖ Fit</button><button className={virtualCam ? "vcam-on" : undefined} onClick={() => void toggleVirtualCamera()}>{virtualCam ? "● Cam ON" : "📷 Virtual Cam"}</button><button className="ghost-mini" title="Always-on-top window (not a webcam)" onClick={() => void toggleOverlay()}>{overlayMode ? "Exit overlay" : "Overlay"}</button></div></div>
           <div className="stage" style={stageStyle}>
             <div className="grid" />
             <div className="vfx-scene" style={postProcessingStyle}>
