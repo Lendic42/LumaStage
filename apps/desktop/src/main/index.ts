@@ -871,10 +871,22 @@ async function issuePluginToken(pluginName: string, pluginDeveloper: string, plu
   return token;
 }
 
+function normalizePairingToken(token: string | undefined): string {
+  if (!token) return "";
+  // Accept only digit runs so invisible paste/keyboard junk cannot break Windows pairing.
+  return token.replace(/\D/g, "");
+}
+
 async function authorizeHello(hello: HelloMessage): Promise<{ deviceToken?: string } | undefined> {
   const storedHash = trustedDevices.get(hello.deviceId);
   if (hello.token && storedHash && hashesMatch(hashToken(hello.token), storedHash)) return {};
-  if (hello.token === pairingCode) return { deviceToken: await trustDevice(hello.deviceId) };
+  const offered = normalizePairingToken(hello.token);
+  if (offered.length === 6 && offered === pairingCode) return { deviceToken: await trustDevice(hello.deviceId) };
+  // Fallback exact match for any non-digit device tokens already issued.
+  if (hello.token && hello.token === pairingCode) return { deviceToken: await trustDevice(hello.deviceId) };
+  console.warn(
+    `[LumaStage] Pairing rejected for ${hello.deviceName}: tokenLen=${hello.token?.length ?? 0} digits=${offered.length} expected=${pairingCode}`
+  );
   return undefined;
 }
 
