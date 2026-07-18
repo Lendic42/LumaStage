@@ -1297,36 +1297,94 @@ function sendModelMovedEvent(): void {
   sendVtsEvent("ModelMovedEvent", { modelID: activeApiModel.modelID, modelName: activeApiModel.modelName, modelPosition: currentModelPosition() });
 }
 
+function isIPv4Family(family: string | number): boolean {
+  // Node/Electron may report family as "IPv4" (string) or 4 (number), especially on Windows.
+  return family === "IPv4" || family === 4;
+}
+
+function isLikelyVirtualAdapter(name: string, address: string): boolean {
+  const n = name.toLowerCase();
+  if (
+    /tailscale|wintun|tun|tap|vpn|happ|docker|vethernet|hyper-v|vmware|virtualbox|wsl|bluetooth|loopback|zerotier|hamachi|radmin|npcap|virtual|pseudo|isatap|teredo/.test(
+      n
+    )
+  ) {
+    return true;
+  }
+  // CGNAT / Tailscale common ranges and APIPA are rarely useful for iPhone Wi‑Fi pairing.
+  if (address.startsWith("100.")) return true;
+  if (address.startsWith("169.254.")) return true;
+  return false;
+}
+
+function rankLanAddress(ip: string, virtual: boolean): number {
+  if (virtual) return 50;
+  if (ip.startsWith("192.168.")) return 0;
+  if (ip.startsWith("10.")) return 1;
+  // RFC1918 172.16.0.0/12 (includes many VPN/docker bridges — still better than public/CGNAT)
+  const octets = ip.split(".").map(Number);
+  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return 2;
+  if (ip.startsWith("169.254.")) return 40;
+  return 30;
+}
+
+/** Reachable IPv4 addresses for manual tracker connect, real LAN first; tunnels last. */
 function listHostAddresses(): string[] {
-  const addresses = new Set<string>();
-  for (const entries of Object.values(networkInterfaces())) {
+  const ranked: { address: string; rank: number }[] = [];
+  const seen = new Set<string>();
+  for (const [name, entries] of Object.entries(networkInterfaces())) {
     for (const entry of entries ?? []) {
-      if (entry.internal || entry.family !== "IPv4") continue;
-      addresses.add(entry.address);
+      if (entry.internal || !isIPv4Family(entry.family)) continue;
+      if (seen.has(entry.address)) continue;
+      seen.add(entry.address);
+      const virtual = isLikelyVirtualAdapter(name, entry.address);
+      ranked.push({ address: entry.address, rank: rankLanAddress(entry.address, virtual) });
     }
   }
-  return [...addresses].sort((a, b) => {
-    const rank = (ip: string): number => {
-      if (ip.startsWith("192.168.")) return 0;
-      if (ip.startsWith("10.")) return 1;
-      if (ip.startsWith("172.")) return 2;
-      if (ip.startsWith("169.254.")) return 4;
-      return 3;
-    };
-    return rank(a) - rank(b) || a.localeCompare(b);
-  });
+  return ranked.sort((a, b) => a.rank - b.rank || a.address.localeCompare(b.address)).map((item) => item.address);
 }
 
 function ensureWindowsFirewallRule(): void {
   if (process.platform !== "win32") return;
   const ruleName = "LumaStage Tracker";
-  execFile("netsh", ["advfirewall", "firewall", "show", "rule", `name=${ruleName}`], (showError) => {
-    if (!showError) return;
+  const addRule = (): void => {
     execFile(
       "netsh",
-      ["advfirewall", "firewall", "add", "rule", `name=${ruleName}`, "dir=in", "action=allow", "protocol=TCP", `localport=${TRACKING_PORT}`, "profile=any"],
-      () => { /* requires elevation; manual allow remains documented in UI */ }
+      [
+        "advfirewall",
+        "firewall",
+        "add",
+        "rule",
+        `name=${ruleName}`,
+        "dir=in",
+        "action=allow",
+        "protocol=TCP",
+        `localport=${TRACKING_PORT}`,
+        "profile=any",
+        "enable=yes"
+      ],
+      (error) => {
+        if (error) {
+          console.warn(
+            `[LumaStage] Could not add Windows Firewall rule for TCP ${TRACKING_PORT} (need admin once). Manual allow: netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${TRACKING_PORT} profile=any`
+          );
+        } else {
+          console.info(`[LumaStage] Windows Firewall allows inbound TCP ${TRACKING_PORT}`);
+        }
+      }
     );
+  };
+
+  execFile("netsh", ["advfirewall", "firewall", "show", "rule", `name=${ruleName}`], (showError, stdout) => {
+    if (!showError && typeof stdout === "string" && /Enabled:\s+Yes/i.test(stdout) && new RegExp(String(TRACKING_PORT)).test(stdout)) {
+      return;
+    }
+    // Missing, disabled, or wrong port — try (re)add. Requires elevation on first install.
+    if (!showError) {
+      execFile("netsh", ["advfirewall", "firewall", "delete", "rule", `name=${ruleName}`], () => addRule());
+      return;
+    }
+    addRule();
   });
 }
 
@@ -1360,9 +1418,21 @@ function acceptFrame(socket: WebSocket, frame: TrackingFrame): void {
 }
 
 function startTrackingServer(): void {
-  // Listen on all interfaces so Wi‑Fi, Ethernet, and USB-tether adapters can reach the tracker port.
+  // Listen on all IPv4 interfaces so Wi‑Fi, Ethernet, and USB-tether adapters can reach the tracker port.
   server = new WebSocketServer({ host: "0.0.0.0", port: TRACKING_PORT, maxPayload: 64 * 1024 });
-  server.on("connection", (socket) => {
+  server.on("listening", () => {
+    const hosts = listHostAddresses();
+    console.info(
+      `[LumaStage] Tracker WebSocket listening on 0.0.0.0:${TRACKING_PORT}` +
+        (hosts.length ? ` · manual hosts: ${hosts.slice(0, 4).map((h) => `${h}:${TRACKING_PORT}`).join(", ")}` : "")
+    );
+  });
+  server.on("error", (error) => {
+    console.error(`[LumaStage] Tracker WebSocket failed on port ${TRACKING_PORT}:`, error);
+  });
+  server.on("connection", (socket, request) => {
+    const remote = request.socket.remoteAddress ?? "unknown";
+    console.info(`[LumaStage] Tracker connection from ${remote}`);
     socket.on("message", async (raw, isBinary) => {
       if (isBinary) return socket.close(1003, "Text frames only");
       try {
@@ -1376,6 +1446,7 @@ function startTrackingServer(): void {
           }
           clients.set(socket, { hello: message, lastSequence: -1 });
           socket.send(JSON.stringify({ type: "hello-accepted", protocol: 1, ...authorization }));
+          console.info(`[LumaStage] Tracker paired: ${message.deviceName} (${message.deviceId}) from ${remote}`);
           publishStatus();
         } else {
           acceptFrame(socket, message);
