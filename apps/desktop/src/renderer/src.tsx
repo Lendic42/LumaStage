@@ -273,7 +273,7 @@ function EffectsView({ state, onUpdate }: { state: PostProcessingState; onUpdate
   </div>;
 }
 
-function SettingsView({ coreStatus, coreInstalling, status, onInstallCore, onForgetTrackers, onForgetPlugins }: { coreStatus: CubismCoreStatus; coreInstalling: boolean; status: DesktopStatus; onInstallCore(): void; onForgetTrackers(): void; onForgetPlugins(): void }) {
+function SettingsView({ coreStatus, coreInstalling, status, onInstallCore, onForgetTrackers, onForgetPlugins, onMessage }: { coreStatus: CubismCoreStatus; coreInstalling: boolean; status: DesktopStatus; onInstallCore(): void; onForgetTrackers(): void; onForgetPlugins(): void; onMessage(message: string): void }) {
   const coreLabel = coreStatus.available ? "Compatible Core installed" : coreStatus.installed ? "Incompatible Core detected" : "Cubism Core is missing";
   return <div className="view-page">
     <section className="view-hero settings-hero"><div><small>LOCAL & OPEN</small><h2>Studio settings</h2><p>Renderer, tracker and plugin access stay under your control on this computer.</p></div></section>
@@ -281,7 +281,7 @@ function SettingsView({ coreStatus, coreInstalling, status, onInstallCore, onFor
       <article className="setting-card featured"><div className="setting-icon">◇</div><div><small>LIVE2D RENDERER</small><h3>{coreLabel}</h3><p>{coreStatus.available ? "Official Cubism Core is ready for compatible Live2D models." : "Install the official compatible Cubism Core directly from Live2D."}</p>{!coreStatus.available && <button className="hero-action" disabled={coreInstalling} onClick={onInstallCore}>{coreInstalling ? "Downloading from Live2D…" : coreStatus.installed ? "Replace with compatible Core" : "Install Cubism Core"}</button>}</div><span className={`status-badge${coreStatus.available ? " good" : " warn"}`}>{coreStatus.available ? "READY" : "ACTION"}</span></article>
       <article className="setting-card"><div className="setting-icon">⌁</div><div><small>IPHONE TRACKER</small><h3>Port {status.port}</h3><p>{status.connectedDevices} connected · {status.trustedDevices} paired device{status.trustedDevices === 1 ? "" : "s"}</p><p className="setting-hosts">Hosts: <code>{formatHostEndpoints(status)}</code></p><p className="setting-note">Windows: use the first IP (prefer 192.168.x). Set Ethernet/Wi-Fi network profile to Private. Allow TCP {status.port} in firewall. Pause VPN/tunnels (Tailscale/happ) if connect fails. USB: Personal Hotspot over cable, then use the PC address shown here.</p>{status.trustedDevices > 0 && <button className="text-action" onClick={onForgetTrackers}>Forget paired devices</button>}</div></article>
       <article className="setting-card"><div className="setting-icon">◫</div><div><small>VTS PLUGIN API</small><h3>127.0.0.1:{status.vtsApiPort}</h3><p>{status.vtsApiActive ? "Local compatibility API is active." : "The compatibility API is unavailable."} {status.allowedPlugins} allowed plugin{status.allowedPlugins === 1 ? "" : "s"}.</p>{status.allowedPlugins > 0 && <button className="text-action" onClick={onForgetPlugins}>Revoke plugin permissions</button>}</div><span className={`status-badge${status.vtsApiActive ? " good" : " warn"}`}>{status.vtsApiActive ? "ACTIVE" : "OFFLINE"}</span></article>
-      <article className="setting-card"><div className="setting-icon">📷</div><div><small>STREAM OUTPUT</small><h3>Virtual webcam</h3><p>Virtual Cam sends only the character with a transparent background into a system camera device (Discord / Zoom / browser). Requires free Unity Capture driver once — not OBS. Overlay is a separate always-on-top window mode.</p></div></article>
+      <article className="setting-card"><div className="setting-icon">📷</div><div><small>STREAM OUTPUT</small><h3>Virtual webcam</h3><p>Virtual Cam = character only + transparent background as a system camera (Discord / Zoom). Driver is bundled — install once from the button below (one UAC). Then pick camera “LumaStage Camera”.</p><button className="text-action" onClick={() => void window.lumastage.installVirtualCameraDriver().then((s) => onMessage(s.installMessage)).catch((reason) => onMessage(String(reason)))}>Install virtual camera driver</button></div></article>
     </section>
   </div>;
 }
@@ -432,9 +432,11 @@ function App() {
       setVirtualCam(status.active);
       if (status.active) {
         setVirtualCamLabel(status.deviceName ? `Cam: ${status.deviceName}` : "Virtual Cam ON");
-      } else if (status.error === "driver-missing") {
+      } else if (status.error === "driver-missing" || (status.error && /driver|shared memory|UAC|install/i.test(status.error))) {
         setVirtualCamLabel("Virtual Cam");
-        setError("Install free Unity Capture driver once, then enable Virtual Cam again.");
+        setError(status.error === "driver-missing"
+          ? "Virtual camera driver needed. Open Settings → Install virtual camera (one UAC prompt)."
+          : status.error);
       } else if (status.error) {
         setVirtualCamLabel("Virtual Cam");
         setError(status.error);
@@ -593,7 +595,7 @@ function App() {
       {activeView === "models" && <ModelsView library={modelLibrary} model={model} onImport={() => void importModel()} onLoad={(modelID) => void loadLibraryModel(modelID)} />}
       {activeView === "tracking" && <TrackingView frame={frame} status={status} model={model} onCalibrate={() => setCalibrationNonce((value) => value + 1)} onEditMappings={() => setMappingEditorOpen(true)} />}
       {activeView === "effects" && <EffectsView state={postProcessing} onUpdate={(update) => void updatePostProcessing(update)} />}
-      {activeView === "settings" && <SettingsView coreStatus={coreStatus} coreInstalling={coreInstalling} status={status} onInstallCore={() => void installCore()} onForgetTrackers={() => void window.lumastage.forgetTrustedDevices()} onForgetPlugins={() => void window.lumastage.forgetPluginAccess()} />}
+      {activeView === "settings" && <SettingsView coreStatus={coreStatus} coreInstalling={coreInstalling} status={status} onInstallCore={() => void installCore()} onForgetTrackers={() => void window.lumastage.forgetTrustedDevices()} onForgetPlugins={() => void window.lumastage.forgetPluginAccess()} onMessage={(message) => setError(message)} />}
     </section>
     {(error || rendererError) && <div className="error-toast" role="alert">{error ?? rendererError}<button aria-label="Dismiss error" onClick={() => { setError(null); setRendererError(null); }}>×</button></div>}
     {mappingEditorOpen && model && <MappingEditor model={model} frame={frame} onClose={() => setMappingEditorOpen(false)} onSaved={(saved) => { setModel(saved); setMappingEditorOpen(false); }} />}
