@@ -1,17 +1,20 @@
 /**
  * Windows virtual webcam via Unity Capture shared memory (RGBA + alpha).
- * Device: "Unity Video Capture" after free driver install (not OBS).
- * https://github.com/schellingb/UnityCapture
+ * Bundled driver installs as "LumaStage Camera" (not OBS).
+ * https://github.com/schellingb/UnityCapture (MIT)
  */
 
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 export const VIRTUAL_CAMERA_DEFAULT = {
   width: 1280,
   height: 720,
   fps: 30
 } as const;
+
+export const VIRTUAL_CAMERA_DEVICE_NAME = "LumaStage Camera";
 
 const MAX_SHARED_IMAGE_SIZE = 3840 * 2160 * 4 * 2;
 
@@ -36,10 +39,12 @@ export interface VirtualCameraWriter {
   close(): void;
 }
 
-// koffi is untyped here; wrap as loose callables to avoid never[] inference.
 type WinFn = (...args: unknown[]) => unknown;
 
-function loadKoffi(): { load: (name: string) => { func: (sig: string) => WinFn }; view: (ptr: unknown, length: number) => ArrayBuffer } | null {
+function loadKoffi(): {
+  load: (name: string) => { func: (sig: string) => WinFn };
+  view: (ptr: unknown, length: number) => ArrayBuffer;
+} | null {
   if (process.platform !== "win32") return null;
   try {
     const require = createRequire(import.meta.url);
@@ -52,23 +57,54 @@ function loadKoffi(): { load: (name: string) => { func: (sig: string) => WinFn }
   }
 }
 
+function queryRegDefault(key: string): string | null {
+  try {
+    const out = execFileSync("reg", ["query", key, "/ve"], {
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const match = out.match(/REG_SZ\s+(.+)$/m);
+    return match?.[1]?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** CLSID slots used by Unity Capture x64 filter (see pyvirtualcam / filter source). */
+const UNITY_CAPTURE_CLSID_KEYS = [
+  "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70010}",
+  "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70011}",
+  "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70000}",
+  "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70020}"
+];
+
+/**
+ * True when the DirectShow filter is registered AND the DLL file still exists.
+ * (Reinstall from Desktop often breaks after the folder is moved/deleted.)
+ */
 export function isUnityCaptureInstalled(): boolean {
   if (process.platform !== "win32") return false;
-  const keys = [
-    "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70010}",
-    "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70011}",
-    "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70000}",
-    "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70020}"
-  ];
-  for (const key of keys) {
-    try {
-      execFileSync("reg", ["query", key], { stdio: "ignore", windowsHide: true });
-      return true;
-    } catch {
-      // continue
-    }
+  for (const key of UNITY_CAPTURE_CLSID_KEYS) {
+    const name = queryRegDefault(key);
+    const dll = queryRegDefault(`${key}\\InprocServer32`);
+    if (!dll) continue;
+    if (!existsSync(dll)) continue;
+    // Accept either default name or our branded name
+    if (!name || /unity video capture|lumastage camera/i.test(name)) return true;
+    // Still count any registered working Unity Capture DLL
+    if (/UnityCaptureFilter/i.test(dll)) return true;
   }
   return false;
+}
+
+export function getUnityCaptureDllPath(): string | null {
+  if (process.platform !== "win32") return null;
+  for (const key of UNITY_CAPTURE_CLSID_KEYS) {
+    const dll = queryRegDefault(`${key}\\InprocServer32`);
+    if (dll && existsSync(dll)) return dll;
+  }
+  return null;
 }
 
 export function createUnityCaptureWriter(options?: {
@@ -84,7 +120,7 @@ export function createUnityCaptureWriter(options?: {
     throw new Error("Native module koffi failed to load");
   }
   if (!isUnityCaptureInstalled()) {
-    throw new Error("Unity Capture driver is not installed");
+    throw new Error("driver-missing");
   }
 
   const width = options?.width ?? VIRTUAL_CAMERA_DEFAULT.width;
@@ -111,6 +147,7 @@ export function createUnityCaptureWriter(options?: {
   const WaitForSingleObject = kernel32.func("uint32 WaitForSingleObject(uintptr h, uint32 ms)");
   const ReleaseMutex = kernel32.func("int ReleaseMutex(uintptr h)");
   const SetEvent = kernel32.func("int SetEvent(uintptr h)");
+  const GetLastError = kernel32.func("uint32 GetLastError()");
 
   const SYNCHRONIZE = 0x00100000;
   const EVENT_MODIFY_STATE = 0x0002;
@@ -118,7 +155,8 @@ export function createUnityCaptureWriter(options?: {
   const FILE_MAP_ALL_ACCESS = 0xf001f;
   const PAGE_READWRITE = 0x04;
   const INFINITE = 0xffffffff;
-  const INVALID_HANDLE_VALUE = 0xffffffff;
+  // CRITICAL on x64: must be -1 (all bits), NOT 0xFFFFFFFF (ERROR_INVALID_HANDLE).
+  const INVALID_HANDLE_VALUE = -1;
 
   const headerBytes = 32;
   const mapBytes = headerBytes + MAX_SHARED_IMAGE_SIZE;
@@ -136,12 +174,17 @@ export function createUnityCaptureWriter(options?: {
   }
 
   if (!hMutex || !hWant || !hSent || !hMap) {
-    throw new Error("Could not create Unity Capture shared memory. Reinstall Unity Capture (Install.bat as admin).");
+    const err = Number(GetLastError() || 0);
+    throw new Error(
+      `Could not open virtual camera shared memory (Win32 error ${err}). ` +
+        `Use Settings → Install virtual camera driver (bundled, one UAC prompt).`
+    );
   }
 
   const viewPtr = MapViewOfFile(hMap, FILE_MAP_WRITE, 0, 0, mapBytes);
   if (!viewPtr) {
-    throw new Error("MapViewOfFile failed for virtual camera buffer");
+    const err = Number(GetLastError() || 0);
+    throw new Error(`MapViewOfFile failed (Win32 error ${err})`);
   }
 
   const ab = koffi.view(viewPtr, mapBytes);
@@ -151,9 +194,20 @@ export function createUnityCaptureWriter(options?: {
   let closed = false;
   const flipScratch = Buffer.allocUnsafe(width * height * 4);
 
+  // Prefer branded name when registered as LumaStage Camera
+  let deviceName = VIRTUAL_CAMERA_DEVICE_NAME;
+  for (const key of UNITY_CAPTURE_CLSID_KEYS) {
+    const name = queryRegDefault(key);
+    if (name && /lumastage/i.test(name)) {
+      deviceName = name;
+      break;
+    }
+    if (name && /unity video capture/i.test(name)) deviceName = name;
+  }
+
   return {
     backend: "unity-capture",
-    deviceName: "Unity Video Capture",
+    deviceName,
     width,
     height,
     sendRgba(frame: Buffer, frameW: number, frameH: number) {
