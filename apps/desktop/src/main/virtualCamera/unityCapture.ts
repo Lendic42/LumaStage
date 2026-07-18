@@ -1,6 +1,6 @@
 /**
  * Windows virtual webcam via Unity Capture shared memory (RGBA + alpha).
- * Bundled driver installs as "LumaStage Camera" (not OBS).
+ * Device: "LumaStage Camera" after bundled driver install (not OBS).
  * https://github.com/schellingb/UnityCapture (MIT)
  */
 
@@ -17,6 +17,7 @@ export const VIRTUAL_CAMERA_DEFAULT = {
 export const VIRTUAL_CAMERA_DEVICE_NAME = "LumaStage Camera";
 
 const MAX_SHARED_IMAGE_SIZE = 3840 * 2160 * 4 * 2;
+const HEADER_BYTES = 32;
 
 export type VirtualCameraStatus = {
   active: boolean;
@@ -43,15 +44,11 @@ type WinFn = (...args: unknown[]) => unknown;
 
 function loadKoffi(): {
   load: (name: string) => { func: (sig: string) => WinFn };
-  view: (ptr: unknown, length: number) => ArrayBuffer;
 } | null {
   if (process.platform !== "win32") return null;
   try {
     const require = createRequire(import.meta.url);
-    return require("koffi") as {
-      load: (name: string) => { func: (sig: string) => WinFn };
-      view: (ptr: unknown, length: number) => ArrayBuffer;
-    };
+    return require("koffi") as { load: (name: string) => { func: (sig: string) => WinFn } };
   } catch {
     return null;
   }
@@ -71,7 +68,6 @@ function queryRegDefault(key: string): string | null {
   }
 }
 
-/** CLSID slots used by Unity Capture x64 filter (see pyvirtualcam / filter source). */
 const UNITY_CAPTURE_CLSID_KEYS = [
   "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70010}",
   "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70011}",
@@ -79,32 +75,15 @@ const UNITY_CAPTURE_CLSID_KEYS = [
   "HKCR\\CLSID\\{5C2CD55C-92AD-4999-8666-912BD3E70020}"
 ];
 
-/**
- * True when the DirectShow filter is registered AND the DLL file still exists.
- * (Reinstall from Desktop often breaks after the folder is moved/deleted.)
- */
 export function isUnityCaptureInstalled(): boolean {
   if (process.platform !== "win32") return false;
   for (const key of UNITY_CAPTURE_CLSID_KEYS) {
-    const name = queryRegDefault(key);
     const dll = queryRegDefault(`${key}\\InprocServer32`);
     if (!dll) continue;
     if (!existsSync(dll)) continue;
-    // Accept either default name or our branded name
-    if (!name || /unity video capture|lumastage camera/i.test(name)) return true;
-    // Still count any registered working Unity Capture DLL
-    if (/UnityCaptureFilter/i.test(dll)) return true;
+    return true;
   }
   return false;
-}
-
-export function getUnityCaptureDllPath(): string | null {
-  if (process.platform !== "win32") return null;
-  for (const key of UNITY_CAPTURE_CLSID_KEYS) {
-    const dll = queryRegDefault(`${key}\\InprocServer32`);
-    if (dll && existsSync(dll)) return dll;
-  }
-  return null;
 }
 
 export function createUnityCaptureWriter(options?: {
@@ -148,6 +127,8 @@ export function createUnityCaptureWriter(options?: {
   const ReleaseMutex = kernel32.func("int ReleaseMutex(uintptr h)");
   const SetEvent = kernel32.func("int SetEvent(uintptr h)");
   const GetLastError = kernel32.func("uint32 GetLastError()");
+  // Write Node Buffer into native mapped view (koffi.view is not available in all builds)
+  const RtlMoveMemory = kernel32.func("void RtlMoveMemory(void *dest, void *src, size_t length)");
 
   const SYNCHRONIZE = 0x00100000;
   const EVENT_MODIFY_STATE = 0x0002;
@@ -155,11 +136,10 @@ export function createUnityCaptureWriter(options?: {
   const FILE_MAP_ALL_ACCESS = 0xf001f;
   const PAGE_READWRITE = 0x04;
   const INFINITE = 0xffffffff;
-  // CRITICAL on x64: must be -1 (all bits), NOT 0xFFFFFFFF (ERROR_INVALID_HANDLE).
+  // x64: must be -1 (all bits set). 0xFFFFFFFF fails with ERROR_INVALID_HANDLE (6).
   const INVALID_HANDLE_VALUE = -1;
 
-  const headerBytes = 32;
-  const mapBytes = headerBytes + MAX_SHARED_IMAGE_SIZE;
+  const mapBytes = HEADER_BYTES + MAX_SHARED_IMAGE_SIZE;
 
   let hMutex = Number(OpenMutexA(SYNCHRONIZE, 0, nameMutex) || 0);
   if (!hMutex) hMutex = Number(CreateMutexA(null, 0, nameMutex) || 0);
@@ -177,7 +157,7 @@ export function createUnityCaptureWriter(options?: {
     const err = Number(GetLastError() || 0);
     throw new Error(
       `Could not open virtual camera shared memory (Win32 error ${err}). ` +
-        `Use Settings → Install virtual camera driver (bundled, one UAC prompt).`
+        `Settings → Install virtual camera driver (one UAC prompt).`
     );
   }
 
@@ -187,14 +167,11 @@ export function createUnityCaptureWriter(options?: {
     throw new Error(`MapViewOfFile failed (Win32 error ${err})`);
   }
 
-  const ab = koffi.view(viewPtr, mapBytes);
-  const mem = Buffer.from(ab);
-  mem.writeUInt32LE(MAX_SHARED_IMAGE_SIZE, 0);
-
   let closed = false;
-  const flipScratch = Buffer.allocUnsafe(width * height * 4);
+  // Staging buffer: header + pixel payload, then one RtlMoveMemory into the view
+  const staging = Buffer.allocUnsafe(HEADER_BYTES + width * height * 4);
+  staging.writeUInt32LE(MAX_SHARED_IMAGE_SIZE, 0);
 
-  // Prefer branded name when registered as LumaStage Camera
   let deviceName = VIRTUAL_CAMERA_DEVICE_NAME;
   for (const key of UNITY_CAPTURE_CLSID_KEYS) {
     const name = queryRegDefault(key);
@@ -217,22 +194,27 @@ export function createUnityCaptureWriter(options?: {
       const dataSize = w * h * 4;
       if (frame.length < dataSize || dataSize > MAX_SHARED_IMAGE_SIZE) return;
 
+      // Header (SharedMemHeader)
+      staging.writeUInt32LE(MAX_SHARED_IMAGE_SIZE, 0);
+      staging.writeInt32LE(w, 4);
+      staging.writeInt32LE(h, 8);
+      staging.writeInt32LE(w, 12); // stride in pixels
+      staging.writeInt32LE(0, 16); // FORMAT_UINT8
+      staging.writeInt32LE(1, 20); // RESIZEMODE_LINEAR
+      staging.writeInt32LE(0, 24); // no mirror
+      staging.writeInt32LE(2_147_483_647, 28); // keep last frame while idle
+
+      // Vertical flip into staging after header
       const row = w * 4;
       for (let y = 0; y < h; y++) {
-        frame.copy(flipScratch, y * row, (h - 1 - y) * row, (h - y) * row);
+        frame.copy(staging, HEADER_BYTES + y * row, (h - 1 - y) * row, (h - y) * row);
       }
 
+      const total = HEADER_BYTES + dataSize;
       WaitForSingleObject(hMutex, INFINITE);
       try {
-        mem.writeUInt32LE(MAX_SHARED_IMAGE_SIZE, 0);
-        mem.writeInt32LE(w, 4);
-        mem.writeInt32LE(h, 8);
-        mem.writeInt32LE(w, 12);
-        mem.writeInt32LE(0, 16);
-        mem.writeInt32LE(1, 20);
-        mem.writeInt32LE(0, 24);
-        mem.writeInt32LE(2_147_483_647, 28);
-        flipScratch.copy(mem, headerBytes, 0, dataSize);
+        // koffi accepts Node Buffer as void* source
+        RtlMoveMemory(viewPtr, staging, total);
       } finally {
         ReleaseMutex(hMutex);
       }
