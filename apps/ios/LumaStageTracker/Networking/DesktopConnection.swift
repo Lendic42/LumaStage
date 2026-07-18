@@ -34,6 +34,12 @@ struct DesktopService: Identifiable, Equatable {
         }
     }
 
+    /// Manual IPv4/hostname endpoint — prefer URLSession WebSocket for reliability on Windows LANs.
+    var manualHostPort: (host: String, port: UInt16)? {
+        guard case let .hostPort(host, port) = endpoint else { return nil }
+        return (String(describing: host), port.rawValue)
+    }
+
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
 }
 
@@ -47,8 +53,11 @@ final class DesktopConnection: ObservableObject {
 
     private var browser: NWBrowser?
     private var connection: NWConnection?
+    private var webSocketTask: URLSessionWebSocketTask?
+    private var urlSession: URLSession?
     private var pendingService: DesktopService?
     private var enteredPairingCode = ""
+    private var receiveGeneration = 0
 
     private static let lastHostKey = "lumastage.lastManualHost"
     private static let lastPortKey = "lumastage.lastManualPort"
@@ -72,6 +81,7 @@ final class DesktopConnection: ObservableObject {
         guard browser == nil else { return }
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
+        parameters.prohibitedInterfaceTypes = [.cellular]
         let browser = NWBrowser(for: .bonjour(type: "_lumastage._tcp", domain: nil), using: parameters)
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             let found = results.map { DesktopService(endpoint: $0.endpoint) }.sorted { $0.name < $1.name }
@@ -129,8 +139,7 @@ final class DesktopConnection: ObservableObject {
     func stop() {
         browser?.cancel()
         browser = nil
-        connection?.cancel()
-        connection = nil
+        tearDownTransport()
         isConnected = false
         isConnecting = false
         connectedService = nil
@@ -141,19 +150,58 @@ final class DesktopConnection: ObservableObject {
         CredentialStore.token(for: credentialKey(for: service)) != nil
     }
 
-    private func openConnection(to service: DesktopService, pairingCode: String) {
+    private func tearDownTransport() {
+        receiveGeneration += 1
         connection?.cancel()
+        connection = nil
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        urlSession?.invalidateAndCancel()
+        urlSession = nil
+    }
+
+    private func openConnection(to service: DesktopService, pairingCode: String) {
+        tearDownTransport()
         errorMessage = nil
         isConnected = false
         isConnecting = true
         pendingService = service
         enteredPairingCode = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Manual host:port — URLSession WebSocket is more reliable to Windows desktops than NWProtocolWebSocket.
+        if let manual = service.manualHostPort {
+            openURLSessionWebSocket(to: service, host: manual.host, port: manual.port)
+            return
+        }
+
+        openNetworkFrameworkWebSocket(to: service)
+    }
+
+    private func openURLSessionWebSocket(to service: DesktopService, host: String, port: UInt16) {
+        guard let url = URL(string: "ws://\(host):\(port)/") else {
+            errorMessage = "Invalid host/port"
+            isConnecting = false
+            return
+        }
+
+        let session = URLSession(configuration: .default)
+        let task = session.webSocketTask(with: url)
+        urlSession = session
+        webSocketTask = task
+        task.resume()
+        // URLSession does not expose a ready callback; send hello immediately and start receive.
+        // Failed handshakes surface on the first send/receive error.
+        sendHello(for: service)
+        receiveURLSessionLoop(for: service, task: task)
+    }
+
+    private func openNetworkFrameworkWebSocket(to service: DesktopService) {
         let websocket = NWProtocolWebSocket.Options()
         websocket.autoReplyPing = true
         let parameters = NWParameters.tcp
         parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
         parameters.includePeerToPeer = true
+        parameters.prohibitedInterfaceTypes = [.cellular]
 
         let connection = NWConnection(to: service.endpoint, using: parameters)
         connection.stateUpdateHandler = { [weak self] state in
@@ -163,7 +211,7 @@ final class DesktopConnection: ObservableObject {
                 switch state {
                 case .ready:
                     self.sendHello(for: service)
-                    self.receiveLoop(on: connection)
+                    self.receiveNetworkLoop(on: connection)
                 case let .failed(error):
                     self.errorMessage = self.friendlyError(error)
                     self.isConnected = false
@@ -190,15 +238,37 @@ final class DesktopConnection: ObservableObject {
                 return "Connection refused. Is LumaStage Desktop running? Check Windows Firewall for port \(Self.defaultPort)."
             }
             if code == .ETIMEDOUT || code == .ENETUNREACH || code == .EHOSTUNREACH {
-                return "Unreachable. Same Wi‑Fi/Ethernet/USB network? Use the PC IP from Desktop → Connect Tracker."
+                return "Unreachable. Same Wi‑Fi/Ethernet/USB network? Use the first (LAN) IP from Desktop → Connect Tracker — not VPN/Tailscale unless both sides use it."
             }
         }
         return error.localizedDescription
     }
 
+    private func friendlyURLError(_ error: Error) -> String {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost:
+                return "Connection refused/lost. Is Desktop running? Firewall TCP \(Self.defaultPort)? Same LAN?"
+            case NSURLErrorTimedOut, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed:
+                return "Timed out. Phone and PC must share Wi‑Fi/Ethernet/USB hotspot. Prefer the 192.168.x IP from Desktop."
+            case NSURLErrorNotConnectedToInternet:
+                return "No network on iPhone. Join the same LAN as the PC (or USB Personal Hotspot)."
+            default:
+                break
+            }
+        }
+        return error.localizedDescription
+    }
+
+    private func resolveAuthToken(for service: DesktopService) -> String {
+        // If the user typed a pairing code, always prefer it so a stale device token cannot block re-pair.
+        if !enteredPairingCode.isEmpty { return enteredPairingCode }
+        return CredentialStore.token(for: credentialKey(for: service)) ?? ""
+    }
+
     private func sendHello(for service: DesktopService) {
-        let storedToken = CredentialStore.token(for: credentialKey(for: service))
-        let token = storedToken ?? enteredPairingCode
+        let token = resolveAuthToken(for: service)
         var payload: [String: Any] = [
             "type": "hello",
             "protocol": 1,
@@ -211,11 +281,54 @@ final class DesktopConnection: ObservableObject {
     }
 
     private func send(_ data: Data) {
+        if let task = webSocketTask {
+            guard let text = String(data: data, encoding: .utf8) else { return }
+            task.send(.string(text)) { [weak self] error in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if let error {
+                        self.errorMessage = self.friendlyURLError(error)
+                        self.isConnecting = false
+                        self.isConnected = false
+                    }
+                }
+            }
+            return
+        }
+
         let context = NWConnection.ContentContext(identifier: "lumalink", metadata: [NWProtocolWebSocket.Metadata(opcode: .text)])
         connection?.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in })
     }
 
-    private func receiveLoop(on connection: NWConnection) {
+    private func receiveURLSessionLoop(for service: DesktopService, task: URLSessionWebSocketTask) {
+        let generation = receiveGeneration
+        task.receive { [weak self] result in
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.receiveGeneration == generation, self.webSocketTask === task else { return }
+                switch result {
+                case let .failure(error):
+                    self.errorMessage = self.friendlyURLError(error)
+                    self.isConnecting = false
+                    self.isConnected = false
+                    self.connectedService = nil
+                case let .success(message):
+                    switch message {
+                    case let .string(text):
+                        if let data = text.data(using: .utf8) { self.handleServerMessage(data) }
+                    case let .data(data):
+                        self.handleServerMessage(data)
+                    @unknown default:
+                        break
+                    }
+                    guard self.webSocketTask === task, self.receiveGeneration == generation else { return }
+                    self.receiveURLSessionLoop(for: service, task: task)
+                }
+            }
+        }
+    }
+
+    private func receiveNetworkLoop(on connection: NWConnection) {
         connection.receiveMessage { [weak self] content, _, _, error in
             Task { @MainActor in
                 guard let self, self.connection === connection else { return }
@@ -227,7 +340,7 @@ final class DesktopConnection: ObservableObject {
                 }
                 if let content { self.handleServerMessage(content) }
                 guard self.connection === connection else { return }
-                self.receiveLoop(on: connection)
+                self.receiveNetworkLoop(on: connection)
             }
         }
     }
@@ -255,8 +368,7 @@ final class DesktopConnection: ObservableObject {
             isConnected = false
             isConnecting = false
             connectedService = nil
-            connection?.cancel()
-            connection = nil
+            tearDownTransport()
         }
     }
 
