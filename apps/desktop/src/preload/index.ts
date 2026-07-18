@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, PostProcessingUpdate, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
+import type { ArtMeshSelectionPrompt, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, PostProcessingUpdate, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -58,12 +58,18 @@ const bridge: LumaStageBridge = {
     ipcRenderer.on("post-processing-changed", handler);
     return () => ipcRenderer.removeListener("post-processing-changed", handler);
   },
+  onArtMeshSelectionRequest(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, prompt: ArtMeshSelectionPrompt) => listener(prompt);
+    ipcRenderer.on("artmesh-selection-request", handler);
+    return () => ipcRenderer.removeListener("artmesh-selection-request", handler);
+  },
   getDesktopStatus: () => ipcRenderer.invoke("get-desktop-status") as Promise<DesktopStatus>,
   importModel: () => ipcRenderer.invoke("import-model") as Promise<ImportedModel | null>,
   getModelLibrary: () => ipcRenderer.invoke("get-model-library") as Promise<ModelLibrary>,
   loadModelFromLibrary: (modelID) => ipcRenderer.invoke("load-library-model", modelID) as Promise<SceneWorkspace>,
   getPostProcessingState: () => ipcRenderer.invoke("get-post-processing-state") as Promise<PostProcessingState>,
   updatePostProcessing: (update: PostProcessingUpdate) => ipcRenderer.invoke("update-post-processing", update) as Promise<PostProcessingState>,
+  resolveArtMeshSelection: (id, success, activeArtMeshes) => ipcRenderer.invoke("resolve-artmesh-selection", id, success, activeArtMeshes) as Promise<boolean>,
   updateModelMappings: (mappings: VTubeParameterMapping[]) => ipcRenderer.invoke("update-model-mappings", mappings) as Promise<ImportedModel>,
   resetModelMappings: () => ipcRenderer.invoke("reset-model-mappings") as Promise<ImportedModel>,
   getSceneWorkspace: () => ipcRenderer.invoke("get-scene-workspace") as Promise<SceneWorkspace>,

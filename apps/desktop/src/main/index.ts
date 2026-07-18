@@ -8,9 +8,9 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
 import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HOTKEY_MOTION_GROUP } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsPostProcessingState, type VtsPostProcessingUpdate, type VtsPostProcessingValue, type VtsSceneItem } from "@lumastage/vts-api";
+import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsArtMeshSelectionInput, type VtsArtMeshSelectionResult, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsPostProcessingState, type VtsPostProcessingUpdate, type VtsPostProcessingValue, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
-import type { ArtMeshGeometry, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
+import type { ArtMeshGeometry, ArtMeshSelectionPrompt, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -78,6 +78,12 @@ let postProcessingFadeTime = 0;
 let postProcessingSaveQueue: Promise<void> = Promise.resolve();
 const pluginSessions = new Map<WebSocket, VtsApiSession>();
 const pendingPluginApprovals = new Map<string, { resolve(approved: boolean): void; timeout: NodeJS.Timeout }>();
+let pendingArtMeshSelection: {
+  prompt: ArtMeshSelectionPrompt;
+  sessionID: string;
+  resolve(result: VtsArtMeshSelectionResult | { error: "busy" }): void;
+  timeout: NodeJS.Timeout;
+} | undefined;
 let vtsApiServer: WebSocketServer | undefined;
 let vtsApiActive = false;
 let testEventTimer: NodeJS.Timeout | undefined;
@@ -1035,6 +1041,53 @@ function tintVtsArtMeshes(sessionID: string, tint: VtsColorTint, matcher: VtsArt
   return matched;
 }
 
+function requestArtMeshSelection(sessionID: string, pluginName: string, input: VtsArtMeshSelectionInput): Promise<VtsArtMeshSelectionResult | { error: "busy" }> {
+  if (pendingArtMeshSelection || BrowserWindow.getAllWindows().length === 0) return Promise.resolve({ error: "busy" });
+  const artMeshIDs = [...activeArtMeshNames];
+  const id = randomUUID();
+  const prompt: ArtMeshSelectionPrompt = {
+    id, pluginName,
+    text: input.textOverride || `${pluginName} asks you to select ArtMeshes.`,
+    help: input.helpOverride || "Select the model layers this plugin may use, then confirm your choice.",
+    requestedArtMeshCount: input.requestedArtMeshCount,
+    artMeshIDs,
+    activeArtMeshes: input.activeArtMeshes.filter((name) => artMeshIDs.includes(name))
+  };
+  return new Promise((resolveSelection) => {
+    const timeout = setTimeout(() => {
+      if (pendingArtMeshSelection?.prompt.id !== id) return;
+      pendingArtMeshSelection = undefined;
+      resolveSelection({ success: false, activeArtMeshes: prompt.activeArtMeshes, inactiveArtMeshes: artMeshIDs.filter((name) => !prompt.activeArtMeshes.includes(name)) });
+    }, 5 * 60_000);
+    pendingArtMeshSelection = { prompt, sessionID, resolve: resolveSelection, timeout };
+    broadcast("artmesh-selection-request", prompt);
+  });
+}
+
+function resolveArtMeshSelection(id: string, success: boolean, selected: string[]): boolean {
+  const pending = pendingArtMeshSelection;
+  if (!pending || pending.prompt.id !== id) return false;
+  const unique = [...new Set(selected)];
+  if ((success && unique.length === 0) || unique.some((name) => !pending.prompt.artMeshIDs.includes(name))) return false;
+  if (success && pending.prompt.requestedArtMeshCount > 0 && unique.length !== pending.prompt.requestedArtMeshCount) return false;
+  clearTimeout(pending.timeout);
+  pendingArtMeshSelection = undefined;
+  pending.resolve({ success, activeArtMeshes: unique, inactiveArtMeshes: pending.prompt.artMeshIDs.filter((name) => !unique.includes(name)) });
+  return true;
+}
+
+function cancelArtMeshSelectionForSession(sessionID: string): void {
+  const pending = pendingArtMeshSelection;
+  if (!pending || pending.sessionID !== sessionID) return;
+  clearTimeout(pending.timeout);
+  pendingArtMeshSelection = undefined;
+  pending.resolve({
+    success: false,
+    activeArtMeshes: pending.prompt.activeArtMeshes,
+    inactiveArtMeshes: pending.prompt.artMeshIDs.filter((name) => !pending.prompt.activeArtMeshes.includes(name))
+  });
+}
+
 function activePhysicsOverrides(): typeof physicsController {
   if (!physicsController) return undefined;
   const now = Date.now();
@@ -1267,6 +1320,7 @@ function startVtsApiServer(): void {
       tags: [...new Set(Object.values(activeImportedModel?.artMeshTags ?? {}).flat())]
     }),
     tintArtMeshes: async (sessionID, tint, matcher) => tintVtsArtMeshes(sessionID, tint, matcher),
+    selectArtMeshes: requestArtMeshSelection,
     physicsState: () => ({
       modelHasPhysics: Boolean(activeApiModel?.hasPhysicsFile), physicsSwitchedOn: Boolean(activeApiModel?.hasPhysicsFile),
       usingLegacyPhysics: false, physicsFPSSetting: -1, baseStrength: 50, baseWind: 0,
@@ -1370,6 +1424,7 @@ function startVtsApiServer(): void {
     socket.on("close", () => {
       void cleanupDisconnectedPluginItems(apiSession);
       cleanupVtsVisualOverrides(apiSession.sessionID ?? "");
+      cancelArtMeshSelectionForSession(apiSession.sessionID ?? "");
       pluginSessions.delete(socket);
       publishStatus();
     });
@@ -1519,6 +1574,10 @@ app.whenReady().then(async () => {
     });
     if ("error" in result) throw new Error("Post-processing preset was not found");
     return publicPostProcessingState();
+  });
+  ipcMain.handle("resolve-artmesh-selection", (_event, requestedID: unknown, requestedSuccess: unknown, requestedActive: unknown) => {
+    if (typeof requestedID !== "string" || typeof requestedSuccess !== "boolean" || !Array.isArray(requestedActive) || requestedActive.length > 100_000 || requestedActive.some((name) => typeof name !== "string" || name.length > 256)) return false;
+    return resolveArtMeshSelection(requestedID, requestedSuccess, requestedActive as string[]);
   });
   ipcMain.handle("update-model-mappings", async (_event, requestedMappings: unknown) => {
     if (!activeImportedModel || !activeModelRoot) throw new Error("Import a model before editing tracking mappings");
@@ -1791,4 +1850,5 @@ app.on("before-quit", () => {
     pending.resolve(false);
   }
   pendingPluginApprovals.clear();
+  if (pendingArtMeshSelection) cancelArtMeshSelectionForSession(pendingArtMeshSelection.sessionID);
 });

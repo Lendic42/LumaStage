@@ -34,6 +34,7 @@ This preserves honest open-source licensing while still building real compatibil
 | Available model list and model load/unload API | Compatible subset | Implemented with persistent private model library and scene update |
 | Model movement API | Compatible subset | Absolute/relative transforms, official ranges and timed interpolation implemented |
 | ArtMesh list and tint API | Compatible subset | Real renderer Drawable IDs, UserData tags, case-insensitive matchers and disconnect cleanup implemented |
+| Interactive ArtMesh selection API | Compatible subset | Searchable real-Drawable dialog, exact/arbitrary counts, preselection, OK/Cancel partition response and single-window ownership implemented |
 | Physics read/override API | Compatible subset | Physics groups, single-plugin ownership, base/group override timers and cleanup implemented |
 | Expression state and activation API | Compatible subset | Implemented with parsed expression parameter details and renderer activation |
 | Input/Live2D parameter reads and timed parameter injection | Compatible subset | Implemented with set/add, weights and one-second expiry |
@@ -43,7 +44,7 @@ This preserves honest open-source licensing while still building real compatibil
 | ArtMesh item pin/unpin API | Compatible subset | Provided/Center/Random triangle selection, barycentric deformation following, angle/size modes and official 1050-1054 errors implemented |
 | Post-processing list/update API | Compatible subset | Six rendered effect groups, 14 official config IDs, normalized filters/IDs, native presets, fades, persistence and official 1150/1201-1205 validation implemented |
 | Custom-data, animated-folder and Live2D item APIs | Incremental compatibility | Planned |
-| Remaining VTube Studio plugin API | Incremental compatibility | Advanced item animation/sorting, interactive ArtMesh selection, hotkey configuration, remaining post-processing configs and additional events remain |
+| Remaining VTube Studio plugin API | Incremental compatibility | Advanced item animation/sorting, hotkey configuration, remaining post-processing configs and additional events remain |
 | Encrypted/locked models | Respect protection; no bypass | By design |
 
 ### VTube Studio sidecars

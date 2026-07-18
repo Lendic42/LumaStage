@@ -172,6 +172,19 @@ export interface VtsArtMeshMatcher {
   tagContains: string[];
 }
 
+export interface VtsArtMeshSelectionInput {
+  requestedArtMeshCount: number;
+  activeArtMeshes: string[];
+  textOverride: string;
+  helpOverride: string;
+}
+
+export interface VtsArtMeshSelectionResult {
+  success: boolean;
+  activeArtMeshes: string[];
+  inactiveArtMeshes: string[];
+}
+
 export interface VtsColorTint {
   colorR: number;
   colorG: number;
@@ -238,6 +251,7 @@ export interface VtsApiHost {
   moveModel(input: VtsModelMoveInput): Promise<boolean>;
   artMeshes(): { names: string[]; tags: string[] };
   tintArtMeshes(sessionID: string, tint: VtsColorTint, matcher: VtsArtMeshMatcher): Promise<string[]>;
+  selectArtMeshes(sessionID: string, pluginName: string, input: VtsArtMeshSelectionInput): Promise<VtsArtMeshSelectionResult | { error: "busy" }>;
   physicsState(): VtsPhysicsState;
   setPhysicsOverrides(sessionID: string, pluginName: string, strength: VtsPhysicsOverride[], wind: VtsPhysicsOverride[]): Promise<"ok" | "controlled" | "invalid-group">;
   faceFound(): boolean;
@@ -595,6 +609,27 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
       tintAll: rawMatcher.tintAll === true, artMeshNumber: numbers as number[], nameExact, nameContains, tagExact, tagContains
     });
     return response("ColorTintResponse", requestID, { matchedArtMeshes: matched.length });
+  }
+
+  if (request.messageType === "ArtMeshSelectionRequest") {
+    if (!model) return error(requestID, 1000, "No model is currently loaded");
+    const names = host.artMeshes().names;
+    if (names.length === 0) return error(requestID, 1000, "The loaded model has no selectable ArtMeshes");
+    const requestedCountRaw = data.requestedArtMeshCount === undefined ? 0 : data.requestedArtMeshCount;
+    if (!Number.isSafeInteger(requestedCountRaw) || (requestedCountRaw as number) > names.length) return error(requestID, 1003, "Requested ArtMesh count is invalid");
+    const active = stringArray(data.activeArtMeshes, 1024);
+    if (!active) return error(requestID, 1003, "Active ArtMesh ID list is invalid or too long");
+    const uniqueActive = [...new Set(active)];
+    if (uniqueActive.some((name) => !names.includes(name))) return error(requestID, 1002, "At least one requested ArtMesh does not exist in the loaded model");
+    const validOverride = (value: unknown): string => typeof value === "string" && value.length >= 4 && value.length <= 1024 ? value : "";
+    const selected = await host.selectArtMeshes(session.sessionID ?? "", session.pluginName ?? "Plugin", {
+      requestedArtMeshCount: Math.max(0, requestedCountRaw as number),
+      activeArtMeshes: uniqueActive,
+      textOverride: validOverride(data.textOverride),
+      helpOverride: validOverride(data.helpOverride)
+    });
+    if ("error" in selected) return error(requestID, 1001, "Another selection window is already open");
+    return response("ArtMeshSelectionResponse", requestID, selected as unknown as JsonObject);
   }
 
   if (request.messageType === "GetCurrentModelPhysicsRequest") {

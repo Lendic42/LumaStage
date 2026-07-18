@@ -68,7 +68,7 @@ LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`
 - `StatisticsRequest`, `CurrentModelRequest` and `FaceFoundRequest`;
 - `AvailableModelsRequest` and `ModelLoadRequest`, including unloading with an empty model ID. Imported models remain in a private persistent library even when no scene currently uses them.
 - `MoveModelRequest` with absolute/relative transforms, the official ranges and timed renderer interpolation;
-- `ArtMeshListRequest` and `ColorTintRequest`, using drawable IDs reported by the loaded Cubism model, case-insensitive name/tag matchers and session cleanup;
+- `ArtMeshListRequest`, interactive `ArtMeshSelectionRequest` and `ColorTintRequest`, using drawable IDs reported by the loaded Cubism model, a searchable exact-count selection dialog, case-insensitive name/tag matchers and session cleanup;
 - `GetCurrentModelPhysicsRequest` and temporary, single-plugin `SetCurrentModelPhysicsRequest` base/group overrides with expiry and disconnect cleanup;
 - `HotkeysInCurrentModelRequest` and `HotkeyTriggerRequest` for imported expression/motion hotkeys;
 - `ExpressionStateRequest` and `ExpressionActivationRequest`, including expression parameter details parsed from `*.exp3.json`;

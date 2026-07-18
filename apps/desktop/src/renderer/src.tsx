@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import type { TrackingFrame } from "@lumastage/protocol";
 import { mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge";
+import type { ArtMeshSelectionPrompt, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge";
 import type { CubismCoreStatus } from "../shared/bridge";
 import { Live2DStage } from "./components/Live2DStage";
 import "./style.css";
@@ -131,6 +131,28 @@ function MappingEditor({ model, frame, onClose, onSaved }: { model: ImportedMode
   </section></div>;
 }
 
+function ArtMeshSelectionModal({ prompt, onResolve }: { prompt: ArtMeshSelectionPrompt; onResolve(success: boolean, active: string[]): void }) {
+  const [selected, setSelected] = useState(() => new Set(prompt.activeArtMeshes));
+  const [query, setQuery] = useState("");
+  const [showHelp, setShowHelp] = useState(false);
+  const filtered = prompt.artMeshIDs.filter((name) => name.toLowerCase().includes(query.trim().toLowerCase()));
+  const exact = prompt.requestedArtMeshCount > 0;
+  const valid = exact ? selected.size === prompt.requestedArtMeshCount : selected.size > 0;
+  const toggle = (name: string) => setSelected((current) => {
+    const next = new Set(current);
+    if (next.has(name)) next.delete(name);
+    else if (!exact || next.size < prompt.requestedArtMeshCount) next.add(name);
+    return next;
+  });
+  return <div className="modal-backdrop artmesh-backdrop"><section className="artmesh-modal">
+    <div className="artmesh-header"><div className="artmesh-mark">◫</div><div><small>PLUGIN ARTMESH REQUEST</small><h2>Select model layers</h2><p>{prompt.text}</p></div><button className="modal-close" title="Help" onClick={() => setShowHelp((value) => !value)}>?</button></div>
+    {showHelp && <div className="artmesh-help">{prompt.help}</div>}
+    <div className="artmesh-tools"><label><span>Search Drawable IDs</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ArtMesh5…" /></label><div><b>{selected.size}</b><span>{exact ? `of ${prompt.requestedArtMeshCount} required` : "selected"}</span></div></div>
+    <div className="artmesh-list">{filtered.map((name) => { const active = selected.has(name); const unavailable = !active && exact && selected.size >= prompt.requestedArtMeshCount; return <button key={name} className={active ? "active" : ""} disabled={unavailable} onClick={() => toggle(name)}><i>{active ? "✓" : ""}</i><span>{name}</span></button>; })}{filtered.length === 0 && <p>No ArtMesh IDs match “{query}”.</p>}</div>
+    <div className="artmesh-footer"><span>Requested by <b>{prompt.pluginName}</b></span>{!exact && <button className="text-action" onClick={() => setSelected(new Set(prompt.artMeshIDs))}>Select all</button>}<button className="secondary" onClick={() => onResolve(false, [...selected])}>Cancel</button><button className="primary" disabled={!valid} onClick={() => onResolve(true, [...selected])}>Use {selected.size} ArtMesh{selected.size === 1 ? "" : "es"}</button></div>
+  </section></div>;
+}
+
 type AppView = "stage" | "models" | "tracking" | "effects" | "settings";
 
 function ModelsView({ library, model, onImport, onLoad }: { library: ModelLibrary; model: ImportedModel | null; onImport(): void; onLoad(modelID: string): void }) {
@@ -219,6 +241,7 @@ function App() {
   const [activeView, setActiveView] = useState<AppView>("stage");
   const [modelLibrary, setModelLibrary] = useState<ModelLibrary>({ models: [] });
   const [postProcessing, setPostProcessing] = useState<PostProcessingState>({ active: true, activePreset: "", presets: ["Dreamy", "Noir", "Retro"], values: {}, fadeTime: 0 });
+  const [artMeshSelection, setArtMeshSelection] = useState<ArtMeshSelectionPrompt | null>(null);
 
   useEffect(() => {
     const offFrame = window.lumastage.onTrackingFrame(setFrame);
@@ -232,12 +255,13 @@ function App() {
     const offModelMove = window.lumastage.onVtsModelMove((value) => setModelMove({ nonce: Date.now(), value }));
     const offSceneWorkspace = window.lumastage.onSceneWorkspaceChanged((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); void window.lumastage.getModelLibrary().then(setModelLibrary); });
     const offPostProcessing = window.lumastage.onPostProcessingChanged(setPostProcessing);
+    const offArtMeshSelection = window.lumastage.onArtMeshSelectionRequest(setArtMeshSelection);
     void window.lumastage.getDesktopStatus().then(setStatus);
     void window.lumastage.getCubismCoreStatus().then(setCoreStatus);
     void window.lumastage.getModelLibrary().then(setModelLibrary).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
     void window.lumastage.getPostProcessingState().then(setPostProcessing).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
     void window.lumastage.getSceneWorkspace().then((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); offExpressionActivation(); offArtMeshTint(); offPhysicsControl(); offModelMove(); offSceneWorkspace(); offPostProcessing(); };
+    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); offExpressionActivation(); offArtMeshTint(); offPhysicsControl(); offModelMove(); offSceneWorkspace(); offPostProcessing(); offArtMeshSelection(); };
   }, []);
 
   useEffect(() => {
@@ -368,6 +392,12 @@ function App() {
     try { setPostProcessing(await window.lumastage.updatePostProcessing({ ...update, fadeTime: 0.25 })); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
+  const resolveArtMeshSelection = async (success: boolean, active: string[]) => {
+    const prompt = artMeshSelection;
+    if (!prompt) return;
+    try { await window.lumastage.resolveArtMeshSelection(prompt.id, success, active); }
+    finally { setArtMeshSelection(null); }
+  };
 
   return <main className={`shell${overlayMode ? " overlay" : ""}`}>
     <aside className="rail">
@@ -442,6 +472,7 @@ function App() {
     </section>
     {(error || rendererError) && <div className="error-toast" role="alert">{error ?? rendererError}<button aria-label="Dismiss error" onClick={() => { setError(null); setRendererError(null); }}>×</button></div>}
     {mappingEditorOpen && model && <MappingEditor model={model} frame={frame} onClose={() => setMappingEditorOpen(false)} onSaved={(saved) => { setModel(saved); setMappingEditorOpen(false); }} />}
+    {artMeshSelection && <ArtMeshSelectionModal prompt={artMeshSelection} onResolve={(success, active) => void resolveArtMeshSelection(success, active)} />}
     {pluginRequests[0] && <div className="modal-backdrop"><section className="plugin-modal"><div className="plugin-mark">◫</div><small>PLUGIN API REQUEST</small><h2>Allow “{pluginRequests[0].pluginName}”?</h2><p>Developer: {pluginRequests[0].pluginDeveloper}</p><p className="modal-note">This local plugin will be able to read model/tracking state and trigger supported model hotkeys. You can revoke access later.</p><div><button className="secondary" onClick={() => void resolvePluginRequest(false)}>Deny</button><button className="primary" onClick={() => void resolvePluginRequest(true)}>Allow plugin</button></div></section></div>}
   </main>;
 }

@@ -139,6 +139,16 @@ export interface ArtMeshGeometry {
   indices: number[];
 }
 
+export interface ArtMeshSelectionPrompt {
+  id: string;
+  pluginName: string;
+  text: string;
+  help: string;
+  requestedArtMeshCount: number;
+  artMeshIDs: string[];
+  activeArtMeshes: string[];
+}
+
 export interface SceneItemUpdate {
   positionX?: number;
   positionY?: number;
@@ -223,12 +233,14 @@ export interface LumaStageBridge {
   onVtsModelMove(listener: (move: VtsModelMoveAnimation) => void): () => void;
   onSceneWorkspaceChanged(listener: (workspace: SceneWorkspace) => void): () => void;
   onPostProcessingChanged(listener: (state: PostProcessingState) => void): () => void;
+  onArtMeshSelectionRequest(listener: (prompt: ArtMeshSelectionPrompt) => void): () => void;
   getDesktopStatus(): Promise<DesktopStatus>;
   importModel(): Promise<ImportedModel | null>;
   getModelLibrary(): Promise<ModelLibrary>;
   loadModelFromLibrary(modelID: string): Promise<SceneWorkspace>;
   getPostProcessingState(): Promise<PostProcessingState>;
   updatePostProcessing(update: PostProcessingUpdate): Promise<PostProcessingState>;
+  resolveArtMeshSelection(id: string, success: boolean, activeArtMeshes: string[]): Promise<boolean>;
   updateModelMappings(mappings: VTubeParameterMapping[]): Promise<ImportedModel>;
   resetModelMappings(): Promise<ImportedModel>;
   getSceneWorkspace(): Promise<SceneWorkspace>;

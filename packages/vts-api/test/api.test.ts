@@ -26,6 +26,10 @@ function host(): VtsApiHost {
     moveModel: async () => true,
     artMeshes: () => ({ names: ["HairFront", "Mouth"], tags: ["hair", "face"] }),
     tintArtMeshes: async () => ["Mouth"],
+    selectArtMeshes: async (_sessionID, _pluginName, input) => {
+      const activeArtMeshes = input.requestedArtMeshCount === 2 ? ["HairFront", "Mouth"] : input.activeArtMeshes.length ? input.activeArtMeshes : ["HairFront"];
+      return { success: true, activeArtMeshes, inactiveArtMeshes: ["HairFront", "Mouth"].filter((name) => !activeArtMeshes.includes(name)) };
+    },
     physicsState: () => ({
       modelHasPhysics: true, physicsSwitchedOn: true, usingLegacyPhysics: false, physicsFPSSetting: -1,
       baseStrength: 50, baseWind: 0, overridePluginName: "",
@@ -135,6 +139,29 @@ describe("VTube Studio API compatibility core", () => {
       artMeshMatcher: { tintAll: false, nameContains: ["mouth"] }
     }), session, host());
     expect((tinted.data as { matchedArtMeshes: number }).matchedArtMeshes).toBe(1);
+  });
+
+  it("opens an interactive ArtMesh selection and validates preselected IDs", async () => {
+    const apiHost = host();
+    const selected = await handleVtsApiRequest(request("ArtMeshSelectionRequest", {
+      requestedArtMeshCount: 2, activeArtMeshes: ["HairFront"], textOverride: "Pick two meshes"
+    }), { authenticated: true, sessionID: "session", pluginName: "Test Plugin" }, apiHost);
+    expect(selected.messageType).toBe("ArtMeshSelectionResponse");
+    expect((selected.data as { activeArtMeshes: string[] }).activeArtMeshes).toEqual(["HairFront", "Mouth"]);
+    const missing = await handleVtsApiRequest(request("ArtMeshSelectionRequest", {
+      activeArtMeshes: ["MissingMesh"]
+    }), { authenticated: true, sessionID: "session", pluginName: "Test Plugin" }, apiHost);
+    expect((missing.data as { errorID: number }).errorID).toBe(1002);
+    const arbitrary = await handleVtsApiRequest(request("ArtMeshSelectionRequest", {
+      requestedArtMeshCount: -1, activeArtMeshes: []
+    }), { authenticated: true, sessionID: "session", pluginName: "Test Plugin" }, apiHost);
+    expect((arbitrary.data as { activeArtMeshes: string[] }).activeArtMeshes).toEqual(["HairFront"]);
+    apiHost.selectArtMeshes = async () => ({ error: "busy" });
+    const busy = await handleVtsApiRequest(request("ArtMeshSelectionRequest"), { authenticated: true, sessionID: "session", pluginName: "Test Plugin" }, apiHost);
+    expect((busy.data as { errorID: number }).errorID).toBe(1001);
+    apiHost.currentModel = () => undefined;
+    const unloaded = await handleVtsApiRequest(request("ArtMeshSelectionRequest"), { authenticated: true }, apiHost);
+    expect((unloaded.data as { errorID: number }).errorID).toBe(1000);
   });
 
   it("reports physics and validates temporary overrides", async () => {
