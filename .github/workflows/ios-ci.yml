@@ -5,6 +5,7 @@ on:
     paths: ["apps/ios/**", ".github/workflows/ios-ci.yml"]
   pull_request:
     paths: ["apps/ios/**", ".github/workflows/ios-ci.yml"]
+  workflow_dispatch:
 
 jobs:
   unsigned-device-build:
@@ -14,10 +15,55 @@ jobs:
       - run: brew install xcodegen
       - working-directory: apps/ios
         run: xcodegen generate --spec project.yml
-      - working-directory: apps/ios
+      - name: Build unsigned archive
+        working-directory: apps/ios
         run: >-
           xcodebuild -project LumaStageTracker.xcodeproj
           -scheme LumaStageTracker -configuration Release
           -destination 'generic/platform=iOS'
-          CODE_SIGNING_ALLOWED=NO build
-
+          -archivePath build/LumaStageTracker.xcarchive
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          CODE_SIGN_IDENTITY=""
+          archive ||
+          xcodebuild -project LumaStageTracker.xcodeproj
+          -scheme LumaStageTracker -configuration Release
+          -destination 'generic/platform=iOS'
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          CODE_SIGN_IDENTITY=""
+          CONFIGURATION_BUILD_DIR=$PWD/build/Release-iphoneos
+          build
+      - name: Package unsigned IPA
+        working-directory: apps/ios
+        run: |
+          set -euo pipefail
+          VERSION=$(grep MARKETING_VERSION project.yml | awk '{print $2}')
+          OUT_DIR="../../outputs/ios"
+          mkdir -p "$OUT_DIR" Payload
+          APP=""
+          if [ -d build/LumaStageTracker.xcarchive/Products/Applications ]; then
+            APP=$(find build/LumaStageTracker.xcarchive/Products/Applications -name "*.app" -maxdepth 1 | head -n1)
+          fi
+          if [ -z "$APP" ]; then
+            APP=$(find build -name "LumaStage Tracker.app" -o -name "LumaStageTracker.app" | head -n1 || true)
+          fi
+          if [ -z "$APP" ]; then
+            APP=$(find ~/Library/Developer/Xcode/DerivedData -name "LumaStage*.app" 2>/dev/null | head -n1 || true)
+          fi
+          if [ -z "$APP" ]; then
+            echo "App bundle not found"; find build -type d -name "*.app" || true; exit 1
+          fi
+          echo "Using app: $APP"
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          IPA="$OUT_DIR/LumaStage-Tracker-${VERSION}-unsigned.ipa"
+          rm -f "$IPA"
+          (cd . && zip -r -y "$IPA" Payload)
+          ls -lh "$IPA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LumaStage-iOS-Tracker
+          path: outputs/ios/*
+          if-no-files-found: error
