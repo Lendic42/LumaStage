@@ -12,6 +12,7 @@ import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HO
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
 import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsArtMeshSelectionInput, type VtsArtMeshSelectionResult, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemAnimationControlInput, type VtsItemAnimationControlResult, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsPostProcessingState, type VtsPostProcessingUpdate, type VtsPostProcessingValue, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, inspectGifAnimation, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
+import { getVirtualCameraStatus, pushVirtualCameraFrame, startVirtualCamera, stopVirtualCamera } from "./virtualCamera/index.js";
 import type { ArtMeshGeometry, ArtMeshSelectionPrompt, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
@@ -1969,6 +1970,23 @@ app.whenReady().then(async () => {
     window.setHasShadow(!enabled);
     return enabled;
   });
+  ipcMain.handle("set-virtual-camera", async (event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") throw new Error("Virtual camera flag must be a boolean");
+    const window = BrowserWindow.fromWebContents(event.sender);
+    return enabled ? startVirtualCamera(window) : stopVirtualCamera();
+  });
+  ipcMain.handle("get-virtual-camera-status", () => getVirtualCameraStatus());
+  ipcMain.handle("push-virtual-camera-frame", (_event, payload: unknown) => {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    const body = payload as { width?: unknown; height?: unknown; rgba?: unknown };
+    if (!Number.isInteger(body.width) || !Number.isInteger(body.height) || body.width! < 2 || body.height! < 2 || body.width! > 3840 || body.height! > 2160) return false;
+    let rgba: Buffer | Uint8Array | ArrayBuffer;
+    if (body.rgba instanceof ArrayBuffer) rgba = body.rgba;
+    else if (ArrayBuffer.isView(body.rgba)) rgba = body.rgba.buffer.slice(body.rgba.byteOffset, body.rgba.byteOffset + body.rgba.byteLength);
+    else if (Buffer.isBuffer(body.rgba)) rgba = body.rgba;
+    else return false;
+    return pushVirtualCameraFrame({ width: body.width as number, height: body.height as number, rgba });
+  });
   ipcMain.handle("forget-trusted-devices", async () => {
     trustedDevices.clear();
     for (const socket of clients.keys()) socket.close(1008, "Device trust was revoked");
@@ -2056,6 +2074,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  stopVirtualCamera();
   if (testEventTimer) clearInterval(testEventTimer);
   service?.stop();
   bonjour?.destroy();
