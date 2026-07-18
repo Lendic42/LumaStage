@@ -1,5 +1,18 @@
 import type { TrackingFrame } from "@lumastage/protocol";
 
+export interface VTubeParameterMapping {
+  name: string;
+  input: string;
+  inputRangeLower: number;
+  inputRangeUpper: number;
+  outputRangeLower: number;
+  outputRangeUpper: number;
+  clampInput: boolean;
+  clampOutput: boolean;
+  outputLive2D: string;
+  smoothing: number;
+}
+
 export interface ImportedModel {
   directory: string;
   manifestPath: string;
@@ -13,18 +26,8 @@ export interface ImportedModel {
   missingFiles: string[];
   manifestUrl: string;
   vTubeModelName?: string;
-  vTubeParameterMappings: Array<{
-    name: string;
-    input: string;
-    inputRangeLower: number;
-    inputRangeUpper: number;
-    outputRangeLower: number;
-    outputRangeUpper: number;
-    clampInput: boolean;
-    clampOutput: boolean;
-    outputLive2D: string;
-    smoothing: number;
-  }>;
+  vTubeParameterMappings: VTubeParameterMapping[];
+  hasCustomMappings: boolean;
   vTubeHotkeys: ImportedHotkey[];
 }
 
@@ -136,6 +139,8 @@ export interface LumaStageBridge {
   onVtsParameterInjection(listener: (injection: VtsParameterInjection) => void): () => void;
   onSceneWorkspaceChanged(listener: (workspace: SceneWorkspace) => void): () => void;
   importModel(): Promise<ImportedModel | null>;
+  updateModelMappings(mappings: VTubeParameterMapping[]): Promise<ImportedModel>;
+  resetModelMappings(): Promise<ImportedModel>;
   getSceneWorkspace(): Promise<SceneWorkspace>;
   createScene(name?: string): Promise<SceneWorkspace>;
   activateScene(id: string): Promise<SceneWorkspace>;

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { inspectCubismModelFolder } from "../src/index.js";
+import { inspectCubismModelFolder, parseEditableVTubeParameterMappings } from "../src/index.js";
 
 async function fixture(manifest: unknown): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "lumastage-model-"));
@@ -74,5 +74,22 @@ describe("Cubism model folder inspection", () => {
     expect(model.vTubeStudio?.parameterMappings[0]).toMatchObject({ input: "FaceAngleX", outputLive2D: "CustomHeadX" });
     expect(model.vTubeStudio?.parameterMappings).toHaveLength(1);
     expect(model.vTubeStudio?.hotkeys[0]).toMatchObject({ action: "ToggleExpression", file: "smile.exp3.json" });
+  });
+});
+
+describe("editable VTube Studio mappings", () => {
+  const mapping = {
+    name: "Eye left", input: "EyeOpenLeft", inputRangeLower: 0, inputRangeUpper: 1,
+    outputRangeLower: 0, outputRangeUpper: 1.9, clampInput: true, clampOutput: true,
+    outputLive2D: "ParamEyeLOpen", smoothing: 10
+  };
+
+  it("accepts finite, bounded mapping editor data", () => {
+    expect(parseEditableVTubeParameterMappings([mapping])).toEqual([mapping]);
+  });
+
+  it("rejects degenerate ranges and unbounded editor payloads", () => {
+    expect(() => parseEditableVTubeParameterMappings([{ ...mapping, inputRangeUpper: 0 }])).toThrow(/different/);
+    expect(() => parseEditableVTubeParameterMappings([{ ...mapping, smoothing: Number.POSITIVE_INFINITY }])).toThrow();
   });
 });

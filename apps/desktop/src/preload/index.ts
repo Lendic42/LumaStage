@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -34,6 +34,8 @@ const bridge: LumaStageBridge = {
     return () => ipcRenderer.removeListener("scene-workspace-changed", handler);
   },
   importModel: () => ipcRenderer.invoke("import-model") as Promise<ImportedModel | null>,
+  updateModelMappings: (mappings: VTubeParameterMapping[]) => ipcRenderer.invoke("update-model-mappings", mappings) as Promise<ImportedModel>,
+  resetModelMappings: () => ipcRenderer.invoke("reset-model-mappings") as Promise<ImportedModel>,
   getSceneWorkspace: () => ipcRenderer.invoke("get-scene-workspace") as Promise<SceneWorkspace>,
   createScene: (name) => ipcRenderer.invoke("create-scene", name) as Promise<SceneWorkspace>,
   activateScene: (id) => ipcRenderer.invoke("activate-scene", id) as Promise<SceneWorkspace>,

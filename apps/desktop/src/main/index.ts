@@ -6,11 +6,11 @@ import { pathToFileURL } from "node:url";
 import Bonjour from "bonjour-service";
 import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
-import { inspectCubismModelFolder } from "@lumastage/model-compat";
+import { inspectCubismModelFolder, parseEditableVTubeParameterMappings } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
 import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsParameter, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -38,6 +38,9 @@ let bonjour: Bonjour | undefined;
 let activeModelRoot: string | undefined;
 let activeApiModel: VtsCurrentModel | undefined;
 let activeImportedModel: ImportedModel | undefined;
+let activeDefaultMappings: VTubeParameterMapping[] = [];
+const modelMappingOverrides = new Map<string, VTubeParameterMapping[]>();
+let modelMappingSaveQueue: Promise<void> = Promise.resolve();
 let sceneLibrary: StoredSceneLibrary = createDefaultSceneLibrary(randomUUID());
 let activeBackgroundPath: string | undefined;
 let sceneSaveQueue: Promise<void> = Promise.resolve();
@@ -73,6 +76,36 @@ function customParametersPath(): string {
 
 function itemFilesPath(): string {
   return join(app.getPath("userData"), "item-files.json");
+}
+
+function modelMappingsPath(): string {
+  return join(app.getPath("userData"), "model-mappings.json");
+}
+
+function modelMappingKey(directory: string): string {
+  return createHash("sha256").update(directory, "utf8").digest("hex");
+}
+
+function saveModelMappingOverrides(): Promise<void> {
+  const payload = `${JSON.stringify(Object.fromEntries(modelMappingOverrides), null, 2)}\n`;
+  const operation = modelMappingSaveQueue.catch(() => undefined).then(async () => {
+    await mkdir(app.getPath("userData"), { recursive: true });
+    await writeFile(modelMappingsPath(), payload, { encoding: "utf8", mode: 0o600 });
+  });
+  modelMappingSaveQueue = operation;
+  return operation;
+}
+
+async function loadModelMappingOverrides(): Promise<void> {
+  try {
+    const parsed = JSON.parse(await readFile(modelMappingsPath(), "utf8")) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!/^[a-f0-9]{64}$/.test(key)) continue;
+      try { modelMappingOverrides.set(key, parseEditableVTubeParameterMappings(value)); } catch { /* Ignore one invalid model override. */ }
+    }
+  } catch {
+    // First launch or invalid mapping registry.
+  }
 }
 
 function saveItemFiles(): Promise<void> {
@@ -212,6 +245,7 @@ function clearActiveModel(): void {
   activeModelRoot = undefined;
   activeApiModel = undefined;
   activeImportedModel = undefined;
+  activeDefaultMappings = [];
 }
 
 async function loadActiveSceneModel(): Promise<ImportedModel | null> {
@@ -844,6 +878,8 @@ function startVtsApiServer(): void {
 async function inspectModelDirectory(directory: string): Promise<ImportedModel> {
   const model = await inspectCubismModelFolder(directory);
   activeModelRoot = model.directory;
+  activeDefaultMappings = (model.vTubeStudio?.parameterMappings ?? []).map((mapping) => ({ ...mapping }));
+  const overriddenMappings = modelMappingOverrides.get(modelMappingKey(model.directory));
   const imported: ImportedModel = {
     directory: model.directory,
     manifestPath: model.manifestPath,
@@ -857,7 +893,8 @@ async function inspectModelDirectory(directory: string): Promise<ImportedModel> 
     missingFiles: model.missingFiles,
     manifestUrl: `lumastage-model://active/${encodeURIComponent(basename(model.manifestPath))}`,
     vTubeModelName: model.vTubeStudio?.name,
-    vTubeParameterMappings: model.vTubeStudio?.parameterMappings ?? [],
+    vTubeParameterMappings: (overriddenMappings ?? activeDefaultMappings).map((mapping) => ({ ...mapping })),
+    hasCustomMappings: Boolean(overriddenMappings),
     vTubeHotkeys: model.vTubeStudio?.hotkeys ?? []
   };
   activeApiModel = {
@@ -934,6 +971,27 @@ app.whenReady().then(async () => {
     }
     sendVtsEvent("ModelLoadedEvent", currentModelEventData(true));
     return model;
+  });
+  ipcMain.handle("update-model-mappings", async (_event, requestedMappings: unknown) => {
+    if (!activeImportedModel || !activeModelRoot) throw new Error("Import a model before editing tracking mappings");
+    const mappings = parseEditableVTubeParameterMappings(requestedMappings);
+    modelMappingOverrides.set(modelMappingKey(activeModelRoot), mappings.map((mapping) => ({ ...mapping })));
+    activeImportedModel = { ...activeImportedModel, vTubeParameterMappings: mappings, hasCustomMappings: true };
+    if (activeApiModel) activeApiModel.numberOfLive2DParameters = mappings.length;
+    await saveModelMappingOverrides();
+    broadcastSceneWorkspace();
+    sendVtsEvent("ModelConfigChangedEvent", currentModelEventData(true));
+    return activeImportedModel;
+  });
+  ipcMain.handle("reset-model-mappings", async () => {
+    if (!activeImportedModel || !activeModelRoot) throw new Error("Import a model before resetting tracking mappings");
+    modelMappingOverrides.delete(modelMappingKey(activeModelRoot));
+    activeImportedModel = { ...activeImportedModel, vTubeParameterMappings: activeDefaultMappings.map((mapping) => ({ ...mapping })), hasCustomMappings: false };
+    if (activeApiModel) activeApiModel.numberOfLive2DParameters = activeDefaultMappings.length;
+    await saveModelMappingOverrides();
+    broadcastSceneWorkspace();
+    sendVtsEvent("ModelConfigChangedEvent", currentModelEventData(true));
+    return activeImportedModel;
   });
   ipcMain.handle("get-scene-workspace", () => sceneWorkspace());
   ipcMain.handle("create-scene", async (_event, requestedName: unknown) => {
@@ -1142,7 +1200,7 @@ app.whenReady().then(async () => {
     sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, false));
     return true;
   });
-  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadScenes()]);
+  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadModelMappingOverrides(), loadScenes()]);
   await backfillItemFilesFromScenes();
   await loadActiveSceneModel();
   startTrackingServer();

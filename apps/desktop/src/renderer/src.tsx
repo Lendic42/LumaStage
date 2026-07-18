@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge";
+import { mapARKitToVTubeInputs } from "@lumastage/tracking-core";
+import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsParameterInjection, VTubeParameterMapping } from "../shared/bridge";
 import type { CubismCoreStatus } from "../shared/bridge";
 import { Live2DStage } from "./components/Live2DStage";
 import "./style.css";
@@ -58,6 +59,72 @@ function Meter({ label, value }: { label: string; value: number }) {
   return <div className="meter"><span>{label}</span><div><i style={{ width: `${normalized * 100}%` }} /></div><b>{normalized.toFixed(2)}</b></div>;
 }
 
+const mappingInputNames = [
+  "FaceAngleX", "FaceAngleY", "FaceAngleZ", "FacePositionX", "FacePositionY", "FacePositionZ",
+  "EyeOpenLeft", "EyeOpenRight", "EyeLeftX", "EyeLeftY", "EyeRightX", "EyeRightY",
+  "MouthOpen", "MouthSmile", "VoiceVolumePlusMouthOpen", "MouthX", "Brows", "BrowLeftY",
+  "BrowRightY", "CheekPuff", "FaceAngry", "TongueOut", "MousePositionX", "MousePositionY"
+];
+
+function MappingEditor({ model, frame, onClose, onSaved }: { model: ImportedModel; frame: TrackingFrame; onClose(): void; onSaved(model: ImportedModel): void }) {
+  const [draft, setDraft] = useState<VTubeParameterMapping[]>(() => model.vTubeParameterMappings.map((mapping) => ({ ...mapping })));
+  const [capture, setCapture] = useState<{ index: number; min: number; max: number } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const liveInputs = useMemo(() => mapARKitToVTubeInputs(frame), [frame]);
+
+  useEffect(() => {
+    if (!capture) return;
+    const mapping = draft[capture.index];
+    const value = mapping ? liveInputs[mapping.input] : undefined;
+    if (value === undefined || !Number.isFinite(value)) return;
+    setCapture((current) => current && current.index === capture.index
+      ? { ...current, min: Math.min(current.min, value), max: Math.max(current.max, value) }
+      : current);
+  }, [capture?.index, draft, liveInputs]);
+
+  const update = (index: number, patch: Partial<VTubeParameterMapping>) => {
+    setDraft((mappings) => mappings.map((mapping, candidate) => candidate === index ? { ...mapping, ...patch } : mapping));
+  };
+  const finishCapture = () => {
+    if (!capture) return;
+    if (capture.max - capture.min >= 0.001) update(capture.index, { inputRangeLower: capture.min, inputRangeUpper: capture.max });
+    else setSaveError("Move this facial input through its range before stopping capture.");
+    setCapture(null);
+  };
+  const save = async () => {
+    setSaveError(null);
+    try { onSaved(await window.lumastage.updateModelMappings(draft)); }
+    catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const reset = async () => {
+    setSaveError(null);
+    try { onSaved(await window.lumastage.resetModelMappings()); }
+    catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const addMapping = () => setDraft((mappings) => [...mappings, {
+    name: "New mapping", input: "MouthOpen", inputRangeLower: 0, inputRangeUpper: 1,
+    outputRangeLower: 0, outputRangeUpper: 1, clampInput: true, clampOutput: true,
+    outputLive2D: "ParamMouthOpenY", smoothing: 10
+  }]);
+
+  return <div className="modal-backdrop mapping-backdrop"><section className="mapping-modal">
+    <div className="mapping-header"><div><small>TRACKING CALIBRATION</small><h2>Model mappings</h2><p>Connect the iPhone, capture your natural movement range, then map it to this model’s Live2D parameters.</p></div><button className="modal-close" onClick={onClose}>×</button></div>
+    <datalist id="mapping-inputs">{mappingInputNames.map((name) => <option key={name} value={name} />)}</datalist>
+    <div className="mapping-list">{draft.map((mapping, index) => {
+      const live = liveInputs[mapping.input];
+      const isCapturing = capture?.index === index;
+      return <article className={`mapping-card${isCapturing ? " capturing" : ""}`} key={`${mapping.outputLive2D}-${index}`}>
+        <div className="mapping-title"><input aria-label="Mapping name" value={mapping.name} onChange={(event) => update(index, { name: event.target.value })} /><button onClick={() => { if (capture?.index === index) setCapture(null); setDraft((mappings) => mappings.filter((_, candidate) => candidate !== index)); }}>Remove</button></div>
+        <div className="mapping-route"><label>Face input<input list="mapping-inputs" value={mapping.input} onChange={(event) => update(index, { input: event.target.value })} /></label><span>→</span><label>Live2D output<input value={mapping.outputLive2D} onChange={(event) => update(index, { outputLive2D: event.target.value })} /></label><div className="live-value"><small>LIVE</small><b>{live === undefined ? "—" : live.toFixed(3)}</b></div></div>
+        <div className="mapping-numbers"><label>Input min<input type="number" step="0.01" value={mapping.inputRangeLower} onChange={(event) => update(index, { inputRangeLower: Number(event.target.value) })} /></label><label>Input max<input type="number" step="0.01" value={mapping.inputRangeUpper} onChange={(event) => update(index, { inputRangeUpper: Number(event.target.value) })} /></label><label>Output min<input type="number" step="0.01" value={mapping.outputRangeLower} onChange={(event) => update(index, { outputRangeLower: Number(event.target.value) })} /></label><label>Output max<input type="number" step="0.01" value={mapping.outputRangeUpper} onChange={(event) => update(index, { outputRangeUpper: Number(event.target.value) })} /></label><label>Smoothing<input type="number" min="0" max="1000" step="1" value={mapping.smoothing} onChange={(event) => update(index, { smoothing: Number(event.target.value) })} /></label></div>
+        <div className="mapping-options"><label><input type="checkbox" checked={mapping.clampInput} onChange={(event) => update(index, { clampInput: event.target.checked })} /> Clamp input</label><label><input type="checkbox" checked={mapping.clampOutput} onChange={(event) => update(index, { clampOutput: event.target.checked })} /> Clamp output</label><button className={isCapturing ? "capture active" : "capture"} disabled={!frame.faceFound || live === undefined} onClick={() => isCapturing ? finishCapture() : setCapture({ index, min: live ?? 0, max: live ?? 0 })}>{isCapturing ? `Stop · ${capture.min.toFixed(2)}…${capture.max.toFixed(2)}` : "● Capture input range"}</button></div>
+      </article>;
+    })}</div>
+    {saveError && <p className="mapping-error">{saveError}</p>}
+    <div className="mapping-footer"><button className="secondary" onClick={addMapping}>＋ Add mapping</button><span /><button className="secondary" disabled={!model.hasCustomMappings} onClick={() => void reset()}>Reset imported</button><button className="secondary" onClick={onClose}>Cancel</button><button className="primary" onClick={() => void save()}>Save mappings</button></div>
+  </section></div>;
+}
+
 function App() {
   const [frame, setFrame] = useState(neutral);
   const [status, setStatus] = useState<DesktopStatus>({ port: 39510, connectedDevices: 0, pairingCode: "------", trustedDevices: 0, vtsApiPort: 8001, vtsApiActive: false, allowedPlugins: 0 });
@@ -73,6 +140,7 @@ function App() {
   const [parameterInjection, setParameterInjection] = useState<{ nonce: number; value: VtsParameterInjection } | null>(null);
   const [sceneLibrary, setSceneLibrary] = useState<SceneLibrary | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [mappingEditorOpen, setMappingEditorOpen] = useState(false);
 
   useEffect(() => {
     const offFrame = window.lumastage.onTrackingFrame(setFrame);
@@ -197,7 +265,7 @@ function App() {
         <aside className="inspector">
           {activeScene && <section className="panel scene-panel"><div className="panel-heading"><h3>Scenes</h3><button className="tiny-add" onClick={() => void window.lumastage.createScene().then(applyWorkspace).catch((reason) => setError(String(reason)))}>＋ New</button></div><div className="scene-tabs">{sceneLibrary?.scenes.map((scene) => <button key={scene.id} className={scene.id === activeScene.id ? "active" : ""} onClick={() => void window.lumastage.activateScene(scene.id).then(applyWorkspace).catch((reason) => setError(String(reason)))}>{scene.name}</button>)}</div><label className="scene-name">Scene name<input value={activeScene.name} maxLength={48} onChange={(event) => setSceneLibrary((library) => library ? { ...library, scenes: library.scenes.map((scene) => scene.id === activeScene.id ? { ...scene, name: event.target.value } : scene) } : library)} onBlur={(event) => void updateActiveScene({ name: event.target.value || "Scene" })} /></label><div className="background-row"><button className="bg-dot violet" title="Violet" onClick={() => void updateActiveScene({ background: { kind: "gradient", preset: "violet" } })} /><button className="bg-dot sunset" title="Sunset" onClick={() => void updateActiveScene({ background: { kind: "gradient", preset: "sunset" } })} /><button className="bg-dot ocean" title="Ocean" onClick={() => void updateActiveScene({ background: { kind: "gradient", preset: "ocean" } })} /><button className="bg-dot studio" title="Studio" onClick={() => void updateActiveScene({ background: { kind: "gradient", preset: "studio" } })} /><input aria-label="Scene background color" type="color" value={activeScene.background.kind === "color" ? activeScene.background.color : "#29233f"} onChange={(event) => void updateActiveScene({ background: { kind: "color", color: event.target.value } })} /><button className="image-pick" onClick={() => void window.lumastage.chooseSceneBackground(activeScene.id).then((workspace) => workspace && applyWorkspace(workspace)).catch((reason) => setError(String(reason)))}>▧ Image</button></div><div className="transform-grid"><label>Scale <b>{activeScene.transform.scale.toFixed(2)}×</b><input type="range" min="0.2" max="3" step="0.01" value={activeScene.transform.scale} onChange={(event) => void updateActiveScene({ transform: { scale: Number(event.target.value) } })} /></label><label>X <b>{Math.round(activeScene.transform.positionX * 100)}</b><input type="range" min="-1" max="1" step="0.01" value={activeScene.transform.positionX} onChange={(event) => void updateActiveScene({ transform: { positionX: Number(event.target.value) } })} /></label><label>Y <b>{Math.round(activeScene.transform.positionY * 100)}</b><input type="range" min="-1" max="1" step="0.01" value={activeScene.transform.positionY} onChange={(event) => void updateActiveScene({ transform: { positionY: Number(event.target.value) } })} /></label><label>Rotate <b>{Math.round(activeScene.transform.rotation)}°</b><input type="range" min="-180" max="180" step="1" value={activeScene.transform.rotation} onChange={(event) => void updateActiveScene({ transform: { rotation: Number(event.target.value) } })} /></label></div><div className="scene-actions"><button className={activeScene.transform.mirror ? "active" : ""} onClick={() => void updateActiveScene({ transform: { mirror: !activeScene.transform.mirror } })}>⇋ Mirror</button><button disabled={(sceneLibrary?.scenes.length ?? 0) < 2} onClick={() => void window.lumastage.deleteScene(activeScene.id).then(applyWorkspace).catch((reason) => setError(String(reason)))}>Delete</button></div></section>}
           {activeScene && <section className="panel item-panel"><div className="panel-heading"><h3>Scene items</h3><button className="tiny-add" onClick={() => void window.lumastage.chooseSceneItem(activeScene.id).then((workspace) => workspace && applyWorkspace(workspace)).catch((reason) => setError(String(reason)))}>＋ Image</button></div>{activeScene.items.length ? <><div className="item-tabs">{activeScene.items.map((item) => <button key={item.id} className={item.id === selectedItemId ? "active" : ""} onClick={() => setSelectedItemId(item.id)}><img src={`${item.imageUrl}?thumb=${item.id}`} alt="" /><span>{item.fileName}</span></button>)}</div>{selectedItem && <><div className="transform-grid"><label>Size <b>{selectedItem.size.toFixed(2)}</b><input type="range" min="0.01" max="1" step="0.01" value={selectedItem.size} onChange={(event) => void updateSelectedItem({ size: Number(event.target.value) })} /></label><label>Opacity <b>{Math.round(selectedItem.opacity * 100)}%</b><input type="range" min="0" max="1" step="0.01" value={selectedItem.opacity} onChange={(event) => void updateSelectedItem({ opacity: Number(event.target.value) })} /></label><label>X <b>{selectedItem.positionX.toFixed(2)}</b><input type="range" min="-1.5" max="1.5" step="0.01" value={selectedItem.positionX} onChange={(event) => void updateSelectedItem({ positionX: Number(event.target.value) })} /></label><label>Y <b>{selectedItem.positionY.toFixed(2)}</b><input type="range" min="-1.5" max="1.5" step="0.01" value={selectedItem.positionY} onChange={(event) => void updateSelectedItem({ positionY: Number(event.target.value) })} /></label><label>Rotate <b>{Math.round(selectedItem.rotation)}°</b><input type="range" min="-180" max="180" step="1" value={selectedItem.rotation} onChange={(event) => void updateSelectedItem({ rotation: Number(event.target.value) })} /></label></div><div className="scene-actions"><button className={selectedItem.flipped ? "active" : ""} onClick={() => void updateSelectedItem({ flipped: !selectedItem.flipped })}>⇋ Flip</button><button className={selectedItem.locked ? "active" : ""} onClick={() => void updateSelectedItem({ locked: !selectedItem.locked })}>{selectedItem.locked ? "🔒 Locked" : "Lock"}</button><button onClick={() => void window.lumastage.deleteSceneItem(activeScene.id, selectedItem.id).then(applyWorkspace).catch((reason) => setError(String(reason)))}>Delete</button></div></>}</> : <p className="empty-items">Add PNG, JPG or GIF props. Plugins can control the same item layer.</p>}</section>}
-          <section className="panel model-panel"><small>ACTIVE MODEL</small><h2>{model?.vTubeModelName ?? model?.name ?? "No model loaded"}</h2><p>{model ? `${model.textureCount} textures · ${model.expressionCount} expressions · ${model.motionCount} motions${model.vTubeParameterMappings.length ? ` · ${model.vTubeParameterMappings.length} VTS mappings` : ""}` : "Import a Cubism/VTube Studio model folder to begin."}</p>{model?.missingFiles.length ? <p className="error">Missing: {model.missingFiles.join(", ")}</p> : null}<button className="primary" onClick={importModel}>＋ Import model folder</button>{!coreStatus.available && <button className="secondary" onClick={installCore}>Install official Cubism Core</button>}{rendererError && <p className="error">{rendererError}</p>}{error && <p className="error">{error}</p>}</section>
+          <section className="panel model-panel"><small>ACTIVE MODEL</small><h2>{model?.vTubeModelName ?? model?.name ?? "No model loaded"}</h2><p>{model ? `${model.textureCount} textures · ${model.expressionCount} expressions · ${model.motionCount} motions${model.vTubeParameterMappings.length ? ` · ${model.vTubeParameterMappings.length} VTS mappings${model.hasCustomMappings ? " · tuned" : ""}` : ""}` : "Import a Cubism/VTube Studio model folder to begin."}</p>{model?.missingFiles.length ? <p className="error">Missing: {model.missingFiles.join(", ")}</p> : null}<button className="primary" onClick={importModel}>＋ Import model folder</button>{model && <button className="secondary" onClick={() => setMappingEditorOpen(true)}>⌁ Edit tracking mappings</button>}{!coreStatus.available && <button className="secondary" onClick={installCore}>Install official Cubism Core</button>}{rendererError && <p className="error">{rendererError}</p>}{error && <p className="error">{error}</p>}</section>
           <section className="panel"><div className="panel-heading"><h3>Live signals</h3><span>{frame.sequence ? `#${frame.sequence}` : "idle"}</span></div><Meter label="Mouth" value={frame.blendShapes.jawOpen ?? 0} /><Meter label="Blink L" value={frame.blendShapes.eyeBlinkLeft ?? 0} /><Meter label="Blink R" value={frame.blendShapes.eyeBlinkRight ?? 0} /><Meter label="Smile" value={((frame.blendShapes.mouthSmileLeft ?? 0) + (frame.blendShapes.mouthSmileRight ?? 0)) / 2} /><button className="secondary" disabled={!frame.faceFound} onClick={() => setCalibrationNonce((value) => value + 1)}>◎ Calibrate neutral pose</button></section>
           {model?.vTubeHotkeys.length ? <section className="panel"><div className="panel-heading"><h3>Model hotkeys</h3><span>{model.vTubeHotkeys.length}</span></div><div className="hotkeys">{model.vTubeHotkeys.map((hotkey, index) => <button key={hotkey.id || `${hotkey.name}-${index}`} onClick={() => triggerHotkey(hotkey)}><span>{hotkey.name || hotkey.action}</span><small>{hotkey.action}</small></button>)}</div></section> : null}
           <section className="panel hint"><div>⌁</div><p><b>Connect Tracker</b><br />Enter pairing code <strong>{status.pairingCode}</strong> on the iPhone. Only paired devices can stream.{status.trustedDevices > 0 && <button className="trust-reset" onClick={() => void window.lumastage.forgetTrustedDevices()}>Forget {status.trustedDevices} paired device{status.trustedDevices === 1 ? "" : "s"}</button>}</p></section>
@@ -206,6 +274,7 @@ function App() {
       </div>
     </section>
     {(error || rendererError) && <div className="error-toast" role="alert">{error ?? rendererError}<button aria-label="Dismiss error" onClick={() => { setError(null); setRendererError(null); }}>×</button></div>}
+    {mappingEditorOpen && model && <MappingEditor model={model} frame={frame} onClose={() => setMappingEditorOpen(false)} onSaved={(saved) => { setModel(saved); setMappingEditorOpen(false); }} />}
     {pluginRequests[0] && <div className="modal-backdrop"><section className="plugin-modal"><div className="plugin-mark">◫</div><small>PLUGIN API REQUEST</small><h2>Allow “{pluginRequests[0].pluginName}”?</h2><p>Developer: {pluginRequests[0].pluginDeveloper}</p><p className="modal-note">This local plugin will be able to read model/tracking state and trigger supported model hotkeys. You can revoke access later.</p><div><button className="secondary" onClick={() => void resolvePluginRequest(false)}>Deny</button><button className="primary" onClick={() => void resolvePluginRequest(true)}>Allow plugin</button></div></section></div>}
   </main>;
 }

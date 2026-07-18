@@ -48,6 +48,8 @@ After that, import a folder containing one `*.model3.json`. LumaStage serves mod
 
 The importer rejects absolute/path-traversal asset references and reports missing files before rendering.
 
+The **Edit tracking mappings** dialog shows every imported face-input → Live2D-output route and its live value. You can edit input/output ranges, smoothing and clamping, add/remove mappings, or capture the natural minimum/maximum of a connected iPhone signal by moving that part of your face. Overrides are validated and stored per model; **Reset imported** restores the untouched `*.vtube.json` configuration.
+
 The stage toolbar includes a transparent always-on-top overlay for OBS/window capture. Imported VTube Studio expression and motion hotkeys are shown in the inspector; actions that cannot be mapped safely are reported instead of guessed.
 
 ## Scenes
@@ -62,7 +64,7 @@ LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`
 
 - `APIStateRequest`, `AuthenticationTokenRequest` and `AuthenticationRequest`;
 - `StatisticsRequest`, `CurrentModelRequest` and `FaceFoundRequest`;
-- `HotkeysInCurrentModelRequest` and `HotkeyTriggerRequest` for imported expression/motion hotkeys.
+- `HotkeysInCurrentModelRequest` and `HotkeyTriggerRequest` for imported expression/motion hotkeys;
 - `InputParameterListRequest`, `ParameterValueRequest`, `Live2DParameterListRequest` and one-second `InjectParameterDataRequest` overrides with `set`/`add` modes and weights.
 - session-scoped `EventSubscriptionRequest` for test, model load, tracking status, background, model config/movement, hotkey and item events. LumaStage emits live tracking, scene, transform and API-hotkey events rather than requiring polling.
 - plugin-owned `ParameterCreationRequest`/`ParameterDeletionRequest`, with the official naming/range limits, per-plugin ownership, persistent storage and cleanup when plugin access is revoked.

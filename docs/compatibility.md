@@ -25,7 +25,7 @@ This preserves honest open-source licensing while still building real compatibil
 | --- | --- | --- |
 | Cubism 3/4/5 model folder discovery | Full | Implemented and tested on official Haru sample |
 | `.model3.json`, textures, physics, expressions, motions | Full through installed official Core | Renderer integrated; live Core verification pending |
-| Common VTube Studio parameter mappings | Import with standard-ID fallback | Implemented for documented/common tracking inputs |
+| Common VTube Studio parameter mappings | Import, tune and reset with standard-ID fallback | Implemented with live visual editor and per-model persistence |
 | VTube Studio expression/motion hotkeys | Best effort; unsupported actions reported | Imported and executable from inspector |
 | VTube Studio scenes/model-changing hotkeys | Best effort | Planned |
 | LumaStage scene presets | Native equivalent | Implemented with model binding, backgrounds and transforms |
@@ -43,4 +43,4 @@ This preserves honest open-source licensing while still building real compatibil
 
 VTube Studio's official manual confirms that the human-readable `*.vtube.json` beside a model stores its setup, but does not publish a stable schema. LumaStage therefore uses tolerant parsing: known mapping/hotkey fields are imported, extra fields are accepted, and the source file is never rewritten during import. Parameter settings preserve input/output ranges, clamping, custom `OutputLive2D` IDs and smoothing.
 
-Known tracking inputs currently include face angles/position, per-eye open and gaze, mouth open/smile, brows, cheek puff, angry face, mouth X and tongue. Unknown inputs remain visible to future mapping-editor work rather than being guessed.
+Known tracking inputs currently include face angles/position, per-eye open and gaze, mouth open/smile, brows, cheek puff, angry face, mouth X and tongue. Unknown inputs remain editable rather than being guessed. The visual mapping editor records live input ranges, validates finite limits and keeps overrides in app user data under a SHA-256 model key; it never rewrites the model author's sidecar.

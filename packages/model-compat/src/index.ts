@@ -81,6 +81,25 @@ export interface VTubeParameterMapping {
   smoothing: number;
 }
 
+const editableVTubeParameterMappingSchema = z.object({
+  name: z.string().max(128).default(""),
+  input: z.string().min(1).max(128),
+  inputRangeLower: z.number().finite().min(-1_000_000).max(1_000_000),
+  inputRangeUpper: z.number().finite().min(-1_000_000).max(1_000_000),
+  outputRangeLower: z.number().finite().min(-1_000_000).max(1_000_000),
+  outputRangeUpper: z.number().finite().min(-1_000_000).max(1_000_000),
+  clampInput: z.boolean(),
+  clampOutput: z.boolean(),
+  outputLive2D: z.string().min(1).max(128),
+  smoothing: z.number().finite().min(0).max(1_000)
+}).refine((mapping) => mapping.inputRangeLower !== mapping.inputRangeUpper, {
+  message: "Input range lower and upper values must be different"
+});
+
+export function parseEditableVTubeParameterMappings(value: unknown): VTubeParameterMapping[] {
+  return z.array(editableVTubeParameterMappingSchema).max(512).parse(value);
+}
+
 export interface VTubeHotkey {
   id: string;
   name: string;

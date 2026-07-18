@@ -24,6 +24,8 @@ Scene documents are validated by the isolated `packages/scene-core` package and 
 
 Visual scene items use the same boundary: absolute item paths remain in main-process persistence while the renderer receives a fixed `lumastage-item://active/<instance-id>` URL. A separate item-file catalog survives unloading scene instances. Local UI and VTube Studio API operations mutate the same validated item state and main broadcasts workspace changes to every renderer window.
 
+User-tuned tracking mappings are stored separately from model assets. The main process validates bounded finite mapping records, keys each override by the SHA-256 digest of the resolved model directory and serializes updates through a write queue. The renderer receives only the active mapping list; resetting removes the override and reuses the original parsed `*.vtube.json` mappings without modifying the model folder.
+
 The renderer boundary is an adapter rather than a direct dependency on one model engine:
 
 - `CubismRenderer`: existing `.moc3`/`.model3.json` models through an installed Cubism Core.
