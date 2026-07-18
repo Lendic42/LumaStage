@@ -28,7 +28,7 @@ struct DesktopService: Identifiable, Equatable {
         case let .service(name, type, domain, _):
             return "service:\(name).\(type).\(domain)"
         case let .hostPort(host, port):
-            return "host:\(host):\(port)"
+            return "host:\(Self.hostString(host)):\(port.rawValue)"
         default:
             return id
         }
@@ -37,7 +37,22 @@ struct DesktopService: Identifiable, Equatable {
     /// Manual IPv4/hostname endpoint — prefer URLSession WebSocket for reliability on Windows LANs.
     var manualHostPort: (host: String, port: UInt16)? {
         guard case let .hostPort(host, port) = endpoint else { return nil }
-        return (String(describing: host), port.rawValue)
+        return (Self.hostString(host), port.rawValue)
+    }
+
+    static func hostString(_ host: NWEndpoint.Host) -> String {
+        switch host {
+        case let .ipv4(address):
+            return "\(address)"
+        case let .ipv6(address):
+            return "\(address)"
+        case let .name(name, _):
+            return name
+        @unknown default:
+            // Avoid String(describing:) quirks like optional wrappers.
+            let raw = "\(host)"
+            return raw.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        }
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
@@ -58,6 +73,7 @@ final class DesktopConnection: ObservableObject {
     private var pendingService: DesktopService?
     private var enteredPairingCode = ""
     private var receiveGeneration = 0
+    private var helloAttempts = 0
 
     private static let lastHostKey = "lumastage.lastManualHost"
     private static let lastPortKey = "lumastage.lastManualPort"
@@ -158,6 +174,12 @@ final class DesktopConnection: ObservableObject {
         webSocketTask = nil
         urlSession?.invalidateAndCancel()
         urlSession = nil
+        helloAttempts = 0
+    }
+
+    /// Keep only ASCII digits so one-time-code paste / keyboard quirks cannot break pairing.
+    private static func normalizePairingCode(_ raw: String) -> String {
+        String(raw.unicodeScalars.filter { CharacterSet.decimalDigits.contains($0) })
     }
 
     private func openConnection(to service: DesktopService, pairingCode: String) {
@@ -166,9 +188,13 @@ final class DesktopConnection: ObservableObject {
         isConnected = false
         isConnecting = true
         pendingService = service
-        enteredPairingCode = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        enteredPairingCode = Self.normalizePairingCode(pairingCode)
 
-        // Manual host:port — URLSession WebSocket is more reliable to Windows desktops than NWProtocolWebSocket.
+        // Manual pair: always prefer the typed 6-digit code over any leftover Keychain token.
+        if !enteredPairingCode.isEmpty {
+            CredentialStore.removeToken(for: credentialKey(for: service))
+        }
+
         if let manual = service.manualHostPort {
             openURLSessionWebSocket(to: service, host: manual.host, port: manual.port)
             return
@@ -184,15 +210,37 @@ final class DesktopConnection: ObservableObject {
             return
         }
 
-        let session = URLSession(configuration: .default)
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = true
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
+        let session = URLSession(configuration: config)
         let task = session.webSocketTask(with: url)
         urlSession = session
         webSocketTask = task
         task.resume()
-        // URLSession does not expose a ready callback; send hello immediately and start receive.
-        // Failed handshakes surface on the first send/receive error.
-        sendHello(for: service)
+
+        // Start receive first, then send hello after the socket has a moment to open.
+        // Immediate send-on-resume can race the handshake on some iOS builds.
         receiveURLSessionLoop(for: service, task: task)
+        scheduleHello(for: service, attempt: 0)
+    }
+
+    private func scheduleHello(for service: DesktopService, attempt: Int) {
+        helloAttempts = attempt
+        let delays: [UInt64] = [80_000_000, 250_000_000, 600_000_000] // 80ms, 250ms, 600ms
+        let delay = delays[min(attempt, delays.count - 1)]
+        let generation = receiveGeneration
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: delay)
+            guard self.receiveGeneration == generation else { return }
+            guard self.isConnecting, !self.isConnected else { return }
+            guard self.pendingService == service else { return }
+            self.sendHello(for: service)
+            if attempt + 1 < delays.count, self.isConnecting, !self.isConnected {
+                self.scheduleHello(for: service, attempt: attempt + 1)
+            }
+        }
     }
 
     private func openNetworkFrameworkWebSocket(to service: DesktopService) {
@@ -238,7 +286,7 @@ final class DesktopConnection: ObservableObject {
                 return "Connection refused. Is LumaStage Desktop running? Check Windows Firewall for port \(Self.defaultPort)."
             }
             if code == .ETIMEDOUT || code == .ENETUNREACH || code == .EHOSTUNREACH {
-                return "Unreachable. Same Wi‑Fi/Ethernet/USB network? Use the first (LAN) IP from Desktop → Connect Tracker — not VPN/Tailscale unless both sides use it."
+                return "Unreachable. Same Wi‑Fi/Ethernet/USB network? Use the first (LAN) IP from Desktop — not VPN/Tailscale."
             }
         }
         return error.localizedDescription
@@ -262,7 +310,8 @@ final class DesktopConnection: ObservableObject {
     }
 
     private func resolveAuthToken(for service: DesktopService) -> String {
-        // If the user typed a pairing code, always prefer it so a stale device token cannot block re-pair.
+        // Typed pairing code always wins.
+        if enteredPairingCode.count == 6 { return enteredPairingCode }
         if !enteredPairingCode.isEmpty { return enteredPairingCode }
         return CredentialStore.token(for: credentialKey(for: service)) ?? ""
     }
@@ -274,10 +323,14 @@ final class DesktopConnection: ObservableObject {
             "protocol": 1,
             "deviceId": UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString,
             "deviceName": UIDevice.current.name,
-            "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+            "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.1"
         ]
-        if !token.isEmpty { payload["token"] = token }
-        if let data = try? JSONSerialization.data(withJSONObject: payload) { send(data) }
+        // Always include token key when we have anything; empty means first-time without code (will be rejected).
+        if !token.isEmpty {
+            payload["token"] = token
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        send(data)
     }
 
     private func send(_ data: Data) {
@@ -286,10 +339,10 @@ final class DesktopConnection: ObservableObject {
             task.send(.string(text)) { [weak self] error in
                 Task { @MainActor in
                     guard let self else { return }
-                    if let error {
+                    // Ignore send errors after we already connected successfully.
+                    if let error, self.isConnecting, !self.isConnected {
+                        // Keep trying other hello attempts; only surface if we stay disconnected.
                         self.errorMessage = self.friendlyURLError(error)
-                        self.isConnecting = false
-                        self.isConnected = false
                     }
                 }
             }
@@ -308,10 +361,12 @@ final class DesktopConnection: ObservableObject {
                 guard self.receiveGeneration == generation, self.webSocketTask === task else { return }
                 switch result {
                 case let .failure(error):
-                    self.errorMessage = self.friendlyURLError(error)
-                    self.isConnecting = false
-                    self.isConnected = false
-                    self.connectedService = nil
+                    if self.isConnecting || self.isConnected {
+                        self.errorMessage = self.friendlyURLError(error)
+                        self.isConnecting = false
+                        self.isConnected = false
+                        self.connectedService = nil
+                    }
                 case let .success(message):
                     switch message {
                     case let .string(text):
@@ -360,8 +415,16 @@ final class DesktopConnection: ObservableObject {
             isConnecting = false
             errorMessage = nil
             enteredPairingCode = ""
+            helloAttempts = 99 // stop further hello retries
         } else if type == "pairing-required" {
-            errorMessage = object["message"] as? String ?? "Pairing code was rejected"
+            let serverMessage = object["message"] as? String ?? "Pairing code was rejected"
+            if enteredPairingCode.count == 6 {
+                errorMessage = "\(serverMessage) (sent code \(enteredPairingCode)). Restart Desktop, then Forget paired devices, and try the new code."
+            } else if enteredPairingCode.isEmpty {
+                errorMessage = "\(serverMessage) — type the 6-digit code before Connect."
+            } else {
+                errorMessage = "\(serverMessage) (code length \(enteredPairingCode.count), need 6)."
+            }
             if let service = pendingService {
                 CredentialStore.removeToken(for: credentialKey(for: service))
             }
