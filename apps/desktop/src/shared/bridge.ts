@@ -48,6 +48,8 @@ export interface ImportedHotkey {
 
 export interface CubismCoreStatus {
   available: boolean;
+  installed?: boolean;
+  compatible?: boolean;
   version?: string;
 }
 
@@ -86,6 +88,26 @@ export interface SceneItem {
   flipped: boolean;
   locked: boolean;
   opacity: number;
+  pin?: SceneItemPin;
+}
+
+export interface SceneItemPin {
+  modelID: string;
+  artMeshID: string;
+  angleRelativeTo: "RelativeToWorld" | "RelativeToModel" | "RelativeToPinPosition";
+  angle: number;
+  vertexID1: number;
+  vertexID2: number;
+  vertexID3: number;
+  vertexWeight1: number;
+  vertexWeight2: number;
+  vertexWeight3: number;
+}
+
+export interface ArtMeshGeometry {
+  id: string;
+  vertexCount: number;
+  indices: number[];
 }
 
 export interface SceneItemUpdate {
@@ -182,6 +204,7 @@ export interface LumaStageBridge {
   deleteScene(id: string): Promise<SceneWorkspace>;
   chooseSceneItem(sceneId: string): Promise<SceneWorkspace | null>;
   updateSceneItem(sceneId: string, itemId: string, update: SceneItemUpdate): Promise<SceneWorkspace>;
+  unpinSceneItem(sceneId: string, itemId: string): Promise<SceneWorkspace>;
   deleteSceneItem(sceneId: string, itemId: string): Promise<SceneWorkspace>;
   getCubismCoreStatus(): Promise<CubismCoreStatus>;
   installCubismCore(): Promise<CubismCoreStatus | null>;
@@ -190,5 +213,5 @@ export interface LumaStageBridge {
   resolvePluginAuthorization(id: string, approved: boolean): Promise<boolean>;
   forgetPluginAccess(): Promise<boolean>;
   notifyLocalHotkey(hotkeyID: string): Promise<boolean>;
-  reportArtMeshes(modelDirectory: string, names: string[]): Promise<boolean>;
+  reportArtMeshes(modelDirectory: string, meshes: ArtMeshGeometry[]): Promise<boolean>;
 }

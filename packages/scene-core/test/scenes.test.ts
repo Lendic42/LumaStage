@@ -37,4 +37,20 @@ describe("scene library", () => {
     const output = normalizeSceneItemTransform({ positionX: 5000, size: 0, rotation: -9000, opacity: 2, flipped: true }, item);
     expect(output).toMatchObject({ positionX: 1000, size: 0, rotation: -3600, opacity: 1, flipped: true });
   });
+
+  it("persists a validated barycentric ArtMesh pin", () => {
+    const library = createDefaultSceneLibrary(id);
+    library.scenes[0].items.push({
+      id, fileName: "hat.png", filePath: "/tmp/hat.png", type: "PNG", positionX: 0, positionY: 0,
+      size: 0.32, rotation: 0, order: 1, flipped: false, locked: false, censored: false, smoothing: 0,
+      opacity: 1, unloadWhenPluginDisconnects: false,
+      pin: {
+        modelID: "haru", artMeshID: "HairFront", angleRelativeTo: "RelativeToPinPosition", angle: 12,
+        vertexID1: 0, vertexID2: 1, vertexID3: 2, vertexWeight1: 0.2, vertexWeight2: 0.3, vertexWeight3: 0.5
+      }
+    });
+    expect(parseSceneLibrary(library, id).scenes[0].items[0].pin?.artMeshID).toBe("HairFront");
+    library.scenes[0].items[0].pin!.vertexWeight3 = 0.6;
+    expect(parseSceneLibrary(library, id).scenes[0].items).toEqual([]);
+  });
 });

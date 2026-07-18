@@ -32,6 +32,7 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .scene-item { position: absolute; max-width: none; max-height: none; user-select: none; cursor: pointer; filter: drop-shadow(0 12px 22px #0005); transform-origin: center; }
 .scene-item.selected { outline: 2px solid #9c88ff; outline-offset: 5px; border-radius: 4px; filter: drop-shadow(0 0 12px #816aff66); }
 .scene-item.locked { cursor: not-allowed; }
+.scene-item.pinned { cursor: crosshair; }
 .grid { position: absolute; inset: 0; opacity: .12; background-image: linear-gradient(#ffffff20 1px, transparent 1px), linear-gradient(90deg, #ffffff20 1px, transparent 1px); background-size: 38px 38px; mask-image: linear-gradient(to bottom, transparent, black 30%, black 75%, transparent); }
 .avatar-wrap { position: relative; z-index: 1; width: 300px; height: 520px; transition: transform 50ms linear; transform-origin: 50% 50%; }
 .avatar-halo { position: absolute; width: 290px; height: 290px; left: 5px; top: 60px; border-radius: 50%; background: #a895ff18; box-shadow: 0 0 90px #805cff44, inset 0 0 70px #ff74cf24; }
@@ -74,6 +75,8 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .item-tabs span { display: block; margin-top: 4px; overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .item-panel .scene-actions { gap: 6px; }.item-panel .scene-actions button { flex: 1; }
 .empty-items { margin: 0 !important; padding: 10px; border: 1px dashed #ffffff12; border-radius: 10px; text-align: center; }
+.pin-status { margin: -3px 0 11px !important; padding: 7px 9px; overflow: hidden; border: 1px solid #74e6b52b; border-radius: 9px; background: #52d49f0d; color: #79a895 !important; font-size: 9px !important; text-overflow: ellipsis; white-space: nowrap; }.pin-status b { color: #83e8bf; }
+.transform-grid input:disabled { opacity: .28; cursor: not-allowed; }
 .panel { padding: 20px; border-radius: 17px; }
 .model-panel { background: linear-gradient(150deg, #18172b, #11131f); }
 .panel h2 { margin: 8px 0 5px; font-size: 18px; }

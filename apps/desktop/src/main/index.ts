@@ -8,9 +8,9 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
 import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HOTKEY_MOTION_GROUP } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsSceneItem } from "@lumastage/vts-api";
+import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
+import type { ArtMeshGeometry, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -40,6 +40,7 @@ let activeApiModel: VtsCurrentModel | undefined;
 let activeImportedModel: ImportedModel | undefined;
 const activeExpressionFiles = new Set<string>();
 let activeArtMeshNames: string[] = [];
+const activeArtMeshGeometry = new Map<string, ArtMeshGeometry>();
 const artMeshTints = new Map<string, { sessionID: string; tint: VtsColorTint; updatedAt: number }>();
 interface ActivePhysicsOverride extends VtsPhysicsOverride { expiresAt: number }
 let physicsController: { sessionID: string; pluginName: string; strength: ActivePhysicsOverride[]; wind: ActivePhysicsOverride[] } | undefined;
@@ -246,7 +247,7 @@ function publicSceneItem(item: StoredSceneItem): SceneItem {
   return {
     id: item.id, fileName: item.fileName, imageUrl: `lumastage-item://active/${encodeURIComponent(item.id)}`, type: item.type,
     positionX: item.positionX, positionY: item.positionY, size: item.size, rotation: item.rotation, order: item.order,
-    flipped: item.flipped, locked: item.locked, opacity: item.opacity
+    flipped: item.flipped, locked: item.locked, opacity: item.opacity, pin: item.pin
   };
 }
 
@@ -284,6 +285,7 @@ function clearActiveModel(): void {
   activeDefaultMappings = [];
   activeExpressionFiles.clear();
   activeArtMeshNames = [];
+  activeArtMeshGeometry.clear();
   artMeshTints.clear();
   physicsController = undefined;
   publishArtMeshTints();
@@ -381,7 +383,8 @@ function vtsSceneItem(item: StoredSceneItem): VtsSceneItem {
     fileName: item.fileName, instanceID: item.id, order: item.order, type: item.type, censored: item.censored,
     flipped: item.flipped, locked: item.locked, smoothing: item.smoothing,
     framerate: item.type === "GIF" ? 30 : 0, frameCount: item.type === "GIF" ? 1 : -1, currentFrame: item.type === "GIF" ? 0 : -1,
-    pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: storedActiveScene().name, fromWorkshop: false
+    pinnedToModel: Boolean(item.pin), pinnedModelID: item.pin?.modelID ?? "", pinnedArtMeshID: item.pin?.artMeshID ?? "",
+    groupName: "", sceneName: storedActiveScene().name, fromWorkshop: false
   };
 }
 
@@ -477,6 +480,71 @@ async function moveVtsItems(inputs: VtsItemMoveInput[]): Promise<Array<{ itemIns
     broadcastSceneWorkspace();
   }
   return results;
+}
+
+function triangleMatches(indices: number[], vertexIDs: [number, number, number]): boolean {
+  const requested = [...vertexIDs].sort((left, right) => left - right).join(",");
+  for (let offset = 0; offset + 2 < indices.length; offset += 3) {
+    if ([indices[offset], indices[offset + 1], indices[offset + 2]].sort((left, right) => left - right).join(",") === requested) return true;
+  }
+  return false;
+}
+
+async function pinVtsItem(input: VtsItemPinInput): ReturnType<VtsApiHost["pinItem"]> {
+  const scene = storedActiveScene();
+  const item = scene.items.find((candidate) => candidate.id === input.itemInstanceID);
+  if (!item) return { error: "item-not-found" };
+  if (!input.pin) {
+    delete item.pin;
+    await saveScenes();
+    broadcastSceneWorkspace();
+    sendVtsEvent("ItemEvent", itemEventData(item, "Changed"));
+    return { item: vtsSceneItem(item) };
+  }
+  const info = input.pinInfo;
+  if (!info || !activeApiModel || (info.modelID && info.modelID !== activeApiModel.modelID)) return { error: "model-not-found" };
+  const geometries = [...activeArtMeshGeometry.values()];
+  const geometry = info.artMeshID
+    ? activeArtMeshGeometry.get(info.artMeshID)
+    : geometries.length > 0 ? geometries[Math.floor(Math.random() * geometries.length)] : undefined;
+  if (!geometry) return { error: "artmesh-not-found" };
+  const triangleCount = Math.floor(geometry.indices.length / 3);
+  if (triangleCount === 0) return { error: "invalid-position" };
+
+  let vertexIDs: [number, number, number];
+  let weights: [number, number, number];
+  if (input.vertexPinType === "Provided") {
+    vertexIDs = [info.vertexID1, info.vertexID2, info.vertexID3];
+    weights = [info.vertexWeight1, info.vertexWeight2, info.vertexWeight3];
+    if (vertexIDs.some((vertexID) => vertexID >= geometry.vertexCount) || !triangleMatches(geometry.indices, vertexIDs) || weights.some((weight) => weight < 0 || weight > 1) || Math.abs(weights.reduce((sum, weight) => sum + weight, 0) - 1) > 1e-5) {
+      return { error: "invalid-position" };
+    }
+  } else {
+    const triangleIndex = input.vertexPinType === "Random" ? Math.floor(Math.random() * triangleCount) : Math.floor(triangleCount / 2);
+    vertexIDs = [geometry.indices[triangleIndex * 3], geometry.indices[triangleIndex * 3 + 1], geometry.indices[triangleIndex * 3 + 2]];
+    if (input.vertexPinType === "Random") {
+      const root = Math.sqrt(Math.random()), split = Math.random();
+      weights = [1 - root, root * (1 - split), root * split];
+    } else {
+      weights = [1 / 3, 1 / 3, 1 / 3];
+    }
+  }
+
+  const resolvedSize = input.sizeRelativeTo === "RelativeToCurrentItemSize" ? item.size + info.size : info.size;
+  if (!Number.isFinite(resolvedSize) || resolvedSize < 0 || resolvedSize > 1) return { error: "invalid-position" };
+  const angleRelativeTo = input.angleRelativeTo === "RelativeToCurrentItemRotation" ? "RelativeToWorld" : input.angleRelativeTo;
+  const angle = input.angleRelativeTo === "RelativeToCurrentItemRotation" ? item.rotation + info.angle : info.angle;
+  if (!angleRelativeTo || !Number.isFinite(angle)) return { error: "invalid-mode" };
+  item.size = resolvedSize;
+  item.pin = {
+    modelID: activeApiModel.modelID, artMeshID: geometry.id, angleRelativeTo, angle,
+    vertexID1: vertexIDs[0], vertexID2: vertexIDs[1], vertexID3: vertexIDs[2],
+    vertexWeight1: weights[0], vertexWeight2: weights[1], vertexWeight3: weights[2]
+  };
+  await saveScenes();
+  broadcastSceneWorkspace();
+  sendVtsEvent("ItemEvent", itemEventData(item, "Changed"));
+  return { item: vtsSceneItem(item) };
 }
 
 async function cleanupDisconnectedPluginItems(apiSession: VtsApiSession): Promise<void> {
@@ -668,6 +736,7 @@ async function validateAndInstallCubismCore(source: Uint8Array): Promise<CubismC
   if (source.byteLength === 0 || source.byteLength > 16 * 1024 * 1024) throw new Error("Cubism Core file has an invalid size");
   const text = new TextDecoder().decode(source);
   if (!text.includes("Live2DCubismCore") || !text.includes("Moc")) throw new Error("Downloaded file is not Live2D Cubism Core for Web");
+  if (!text.includes("csmGetDrawableRenderOrders")) throw new Error("This Cubism Core version is not compatible. Select Cubism SDK for Web 5.x.");
   await mkdir(join(app.getPath("userData"), "runtime"), { recursive: true });
   await writeFile(cubismCorePath(), source, { mode: 0o600 });
   return coreStatus();
@@ -712,7 +781,9 @@ async function coreStatus(): Promise<CubismCoreStatus> {
   try {
     const source = await readFile(cubismCorePath(), "utf8");
     const version = source.match(/Cubism\s*(?:Core)?\s*v?([0-9]+(?:\.[0-9]+){1,3})/i)?.[1];
-    return { available: source.includes("Live2DCubismCore"), version };
+    const installed = source.includes("Live2DCubismCore");
+    const compatible = installed && source.includes("csmGetDrawableRenderOrders");
+    return { available: compatible, installed, compatible, version: version ?? (compatible ? "5.x" : undefined) };
   } catch {
     return { available: false };
   }
@@ -765,6 +836,7 @@ function installAssetProtocols(): void {
       return new Response("Unknown runtime asset", { status: 404 });
     }
     try {
+      if (!(await coreStatus()).available) return new Response("Compatible Cubism Core 5.x is not installed", { status: 409 });
       return await net.fetch(pathToFileURL(cubismCorePath()).toString());
     } catch {
       return new Response("Cubism Core is not installed", { status: 404 });
@@ -1147,7 +1219,8 @@ function startVtsApiServer(): void {
     listItems: listVtsItems,
     loadItem: loadVtsItem,
     unloadItems: unloadVtsItems,
-    moveItems: moveVtsItems
+    moveItems: moveVtsItems,
+    pinItem: pinVtsItem
   };
 
   vtsApiServer = new WebSocketServer({ host: "127.0.0.1", port: VTS_API_PORT, maxPayload: 1024 * 1024 });
@@ -1453,6 +1526,16 @@ app.whenReady().then(async () => {
     if (scene.id === sceneLibrary.activeSceneId && item.locked !== wasLocked) sendVtsEvent("ItemEvent", itemEventData(item, item.locked ? "Locked" : "Unlocked"));
     return sceneWorkspace();
   });
+  ipcMain.handle("unpin-scene-item", async (_event, requestedSceneId: unknown, requestedItemId: unknown) => {
+    const scene = requireScene(requestedSceneId);
+    const item = requireSceneItem(scene, requestedItemId);
+    if (item.pin) {
+      delete item.pin;
+      await saveScenes();
+      if (scene.id === sceneLibrary.activeSceneId) sendVtsEvent("ItemEvent", itemEventData(item, "Changed"));
+    }
+    return sceneWorkspace();
+  });
   ipcMain.handle("delete-scene-item", async (_event, requestedSceneId: unknown, requestedItemId: unknown) => {
     const scene = requireScene(requestedSceneId);
     const item = requireSceneItem(scene, requestedItemId);
@@ -1526,10 +1609,23 @@ app.whenReady().then(async () => {
     sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, false));
     return true;
   });
-  ipcMain.handle("report-artmeshes", (_event, modelDirectory: unknown, names: unknown) => {
+  ipcMain.handle("report-artmeshes", (_event, modelDirectory: unknown, meshes: unknown) => {
     if (typeof modelDirectory !== "string" || modelDirectory !== activeImportedModel?.directory) return false;
-    if (!Array.isArray(names) || names.length > 100_000 || names.some((name) => typeof name !== "string" || name.length === 0 || name.length > 256)) throw new Error("Invalid ArtMesh report");
-    activeArtMeshNames = [...new Set(names as string[])];
+    if (!Array.isArray(meshes) || meshes.length > 100_000) throw new Error("Invalid ArtMesh report");
+    const parsed = new Map<string, ArtMeshGeometry>();
+    let totalIndices = 0;
+    for (const raw of meshes) {
+      if (!raw || typeof raw !== "object") throw new Error("Invalid ArtMesh report");
+      const mesh = raw as Record<string, unknown>;
+      if (typeof mesh.id !== "string" || mesh.id.length === 0 || mesh.id.length > 256 || !Number.isInteger(mesh.vertexCount) || (mesh.vertexCount as number) < 0 || (mesh.vertexCount as number) > 1_000_000 || !Array.isArray(mesh.indices) || mesh.indices.length % 3 !== 0) throw new Error("Invalid ArtMesh geometry");
+      if (mesh.indices.some((index) => !Number.isInteger(index) || (index as number) < 0 || (index as number) >= (mesh.vertexCount as number))) throw new Error("Invalid ArtMesh indices");
+      totalIndices += mesh.indices.length;
+      if (totalIndices > 2_000_000) throw new Error("ArtMesh geometry report is too large");
+      parsed.set(mesh.id, { id: mesh.id, vertexCount: mesh.vertexCount as number, indices: [...mesh.indices] as number[] });
+    }
+    activeArtMeshGeometry.clear();
+    for (const [id, geometry] of parsed) activeArtMeshGeometry.set(id, geometry);
+    activeArtMeshNames = [...parsed.keys()];
     if (activeApiModel) activeApiModel.numberOfLive2DArtmeshes = activeArtMeshNames.length;
     publishArtMeshTints();
     publishPhysicsControl();

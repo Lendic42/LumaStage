@@ -73,7 +73,7 @@ LumaStage exposes a localhost-only compatibility server at `ws://127.0.0.1:8001`
 - `InputParameterListRequest`, `ParameterValueRequest`, `Live2DParameterListRequest` and one-second `InjectParameterDataRequest` overrides with `set`/`add` modes and weights.
 - session-scoped `EventSubscriptionRequest` for test, model load, tracking status, background, model config/movement, hotkey and item events. LumaStage emits live tracking, scene, transform and API-hotkey events rather than requiring polling.
 - plugin-owned `ParameterCreationRequest`/`ParameterDeletionRequest`, with the official naming/range limits, per-plugin ownership, persistent storage and cleanup when plugin access is revoked.
-- visual `ItemListRequest`, `ItemLoadRequest`, `ItemMoveRequest` and `ItemUnloadRequest`. API changes update the live canvas and scene editor immediately, emit `ItemEvent`, and honor `unloadWhenPluginDisconnects`.
+- visual `ItemListRequest`, `ItemLoadRequest`, `ItemMoveRequest`, `ItemUnloadRequest` and `ItemPinRequest`. Pins support official Provided/Center/Random modes and follow deformed ArtMesh triangles through barycentric coordinates; API changes update the live canvas and scene editor immediately, emit `ItemEvent`, and honor `unloadWhenPluginDisconnects`.
 
 Unsupported request types return the official `APIError` shape instead of silently succeeding. See the compatibility matrix for the remaining API surface.
 

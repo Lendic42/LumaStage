@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
-import { Application } from "pixi.js";
+import { Application, ENV, Point, settings } from "pixi.js";
 import "@pixi/unsafe-eval";
 import type { Live2DModel as Live2DModelType, Cubism4InternalModel } from "pixi-live2d-display/cubism4";
 import { TrackingEngine } from "@lumastage/tracking-core";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { ImportedHotkey, ImportedModel, SceneTransform, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl } from "../../shared/bridge";
+import type { ImportedHotkey, ImportedModel, SceneItem, SceneTransform, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl } from "../../shared/bridge";
 
 interface Props {
   model: ImportedModel | null;
@@ -17,6 +17,8 @@ interface Props {
   physicsControl: VtsPhysicsControl;
   modelMove: { nonce: number; value: VtsModelMoveAnimation } | null;
   sceneTransform: SceneTransform;
+  pinnedItems: SceneItem[];
+  onPinnedItemLayout(itemID: string, layout: { x: number; y: number; rotation: number }): void;
   onReady(ready: boolean): void;
   onError(message: string | null): void;
 }
@@ -44,7 +46,7 @@ function loadCubismCore(): Promise<void> {
   return loading;
 }
 
-export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, expressionRequest, artMeshTint, physicsControl, modelMove, sceneTransform, onReady, onError }: Props) {
+export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, expressionRequest, artMeshTint, physicsControl, modelMove, sceneTransform, pinnedItems, onPinnedItemLayout, onReady, onError }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef(new TrackingEngine());
@@ -54,9 +56,13 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
   const fitHandlerRef = useRef<(() => void) | null>(null);
   const artMeshTintRef = useRef(artMeshTint);
   const physicsControlRef = useRef(physicsControl);
+  const pinnedItemsRef = useRef(pinnedItems);
+  const pinnedLayoutHandlerRef = useRef(onPinnedItemLayout);
 
   useEffect(() => { artMeshTintRef.current = artMeshTint; }, [artMeshTint]);
   useEffect(() => { physicsControlRef.current = physicsControl; }, [physicsControl]);
+  useEffect(() => { pinnedItemsRef.current = pinnedItems; }, [pinnedItems]);
+  useEffect(() => { pinnedLayoutHandlerRef.current = onPinnedItemLayout; }, [onPinnedItemLayout]);
 
   useEffect(() => {
     sceneTransformRef.current = sceneTransform;
@@ -143,6 +149,11 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
       const { Live2DModel } = await import("pixi-live2d-display/cubism4");
       if (disposed || !canvasRef.current || !containerRef.current) return;
 
+      // Some Intel/virtualized WebGL drivers report zero texture units during Pixi's
+      // dynamic shader probe. Live2D uses its own renderer, so the reliable single-
+      // texture batch path avoids that invalid probe without affecting Cubism drawables.
+      settings.PREFER_ENV = ENV.WEBGL_LEGACY;
+
       app = new Application({
         view: canvasRef.current,
         resizeTo: containerRef.current,
@@ -187,7 +198,15 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
         }
       });
       const artMeshNames = liveModel.internalModel.getDrawableIDs();
-      await window.lumastage.reportArtMeshes(imported.directory, artMeshNames);
+      const cubismModel = liveModel.internalModel.coreModel as unknown as {
+        getDrawableVertexCount(drawableIndex: number): number;
+        getDrawableVertexIndices(drawableIndex: number): Uint16Array;
+      };
+      await window.lumastage.reportArtMeshes(imported.directory, artMeshNames.map((id, drawableIndex) => ({
+        id,
+        vertexCount: cubismModel.getDrawableVertexCount(drawableIndex),
+        indices: Array.from(cubismModel.getDrawableVertexIndices(drawableIndex))
+      })));
       const core = liveModel.internalModel.coreModel as unknown as { getModel(): { drawables: { multiplyColors?: Float32Array } } };
       const drawables = core.getModel().drawables;
       const physics = liveModel.internalModel.physics as unknown as {
@@ -227,6 +246,25 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
               if (rig.outputs[outputIndex]) rig.outputs[outputIndex].weight = (defaultPhysicsWeights[outputIndex] ?? rig.outputs[outputIndex].weight) * (control.baseStrength / 50) * multiplier;
             }
           });
+        }
+        for (const item of pinnedItemsRef.current) {
+          const pin = item.pin;
+          if (!pin) continue;
+          let vertices: Float32Array;
+          try { vertices = liveModel.internalModel.getDrawableVertices(pin.artMeshID); } catch { continue; }
+          const ids = [pin.vertexID1, pin.vertexID2, pin.vertexID3];
+          if (ids.some((vertexID) => vertexID * 2 + 1 >= vertices.length)) continue;
+          const weights = [pin.vertexWeight1, pin.vertexWeight2, pin.vertexWeight3];
+          const localX = ids.reduce((sum, vertexID, index) => sum + vertices[vertexID * 2] * weights[index], 0);
+          const localY = ids.reduce((sum, vertexID, index) => sum + vertices[vertexID * 2 + 1] * weights[index], 0);
+          const point = liveModel.toGlobal(new Point(localX, localY));
+          const first = liveModel.toGlobal(new Point(vertices[ids[0] * 2], vertices[ids[0] * 2 + 1]));
+          const second = liveModel.toGlobal(new Point(vertices[ids[1] * 2], vertices[ids[1] * 2 + 1]));
+          const pinAngle = Math.atan2(second.y - first.y, second.x - first.x) * 180 / Math.PI;
+          const rotation = pin.angleRelativeTo === "RelativeToModel"
+            ? pin.angle + sceneTransformRef.current.rotation
+            : pin.angleRelativeTo === "RelativeToPinPosition" ? pin.angle + pinAngle : pin.angle;
+          pinnedLayoutHandlerRef.current(item.id, { x: point.x, y: point.y, rotation });
         }
       });
       liveModel.on("hit", (areas: string[]) => {

@@ -24,6 +24,8 @@ Scene documents are validated by the isolated `packages/scene-core` package and 
 
 Visual scene items use the same boundary: absolute item paths remain in main-process persistence while the renderer receives a fixed `lumastage-item://active/<instance-id>` URL. A separate item-file catalog survives unloading scene instances. Local UI and VTube Studio API operations mutate the same validated item state and main broadcasts workspace changes to every renderer window.
 
+Pinned items store a validated model ID, ArtMesh ID, one real drawable triangle and barycentric weights. The Cubism renderer reports vertex counts and triangle indices once, then resolves the three deformed vertices every frame and imperatively positions the DOM item in canvas coordinates. Center/Random requests are normalized to concrete triangles before persistence; a Provided request is rejected unless its three IDs are an actual triangle and its weights add to one.
+
 User-tuned tracking mappings are stored separately from model assets. The main process validates bounded finite mapping records, keys each override by the SHA-256 digest of the resolved model directory and serializes updates through a write queue. The renderer receives only the active mapping list; resetting removes the override and reuses the original parsed `*.vtube.json` mappings without modifying the model folder.
 
 Imported model directories also live in a private main-process library independent of scenes. `AvailableModelsRequest` reads validated metadata from that library, while `ModelLoadRequest` attaches the selected model to the active scene (or clears it for an empty ID), broadcasts the new workspace and emits model events. Expression state remains in main and activation is forwarded to the renderer through a narrow typed IPC event.
@@ -32,7 +34,7 @@ The Cubism adapter reports actual drawable IDs back to main after a model is ini
 
 VTube Studio standalone animation hotkeys are resolved only within the validated model root. For renderer loading, main returns an in-memory manifest view with one synthetic motion group; the on-disk `model3.json` and `*.vtube.json` are never rewritten. Each imported hotkey carries its exact runtime group/index and validated trigger metadata, avoiding filename guessing in the renderer.
 
-Cubism Core remains outside the repository and packages. The missing-Core action requires an explicit Live2D license confirmation, downloads from a fixed official HTTPS host, rejects redirects to other hosts and validates the payload before writing it to the private runtime directory. Manual selection remains a fallback when the official host is unavailable.
+Cubism Core remains outside the repository and packages. The missing-Core action requires an explicit Live2D license confirmation, downloads from a fixed official HTTPS host, rejects redirects to other hosts and validates both the product signature and the Core 5 render-order ABI before writing it to the private runtime directory. An already installed incompatible Core 6 is not executed: the UI explains the mismatch and offers the same official replacement flow. Pixi uses its reliable single-texture batch path because some Intel/virtualized WebGL drivers report zero texture units during the optional dynamic shader probe; Cubism drawables keep their separate renderer. Manual selection remains a fallback when the official host is unavailable.
 
 The renderer boundary is an adapter rather than a direct dependency on one model engine:
 

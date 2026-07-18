@@ -49,7 +49,10 @@ function host(): VtsApiHost {
     }),
     loadItem: async (_name, _developer, _sessionID, input) => input.fileName === "hat.png" ? { item: { fileName: "hat.png", instanceID: "item-2", order: input.order, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: "Main", fromWorkshop: false } } : { error: "not-found" },
     unloadItems: async () => [{ fileName: "hat.png", instanceID: "item-1", order: 1, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: "Main", fromWorkshop: false }],
-    moveItems: async (inputs) => inputs.map((input) => ({ itemInstanceID: input.itemInstanceID, success: true, errorID: -1 }))
+    moveItems: async (inputs) => inputs.map((input) => ({ itemInstanceID: input.itemInstanceID, success: true, errorID: -1 })),
+    pinItem: async (input) => input.itemInstanceID === "missing" ? { error: "item-not-found" } : {
+      item: { fileName: "hat.png", instanceID: input.itemInstanceID, order: 1, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: input.pin, pinnedModelID: input.pin ? "haru" : "", pinnedArtMeshID: input.pin ? "HairFront" : "", groupName: "", sceneName: "Main", fromWorkshop: false }
+    }
   };
 }
 
@@ -226,5 +229,24 @@ describe("VTube Studio API compatibility core", () => {
     expect((moved.data as { movedItems: Array<{ success: boolean }> }).movedItems[0].success).toBe(true);
     const unloaded = await handleVtsApiRequest(request("ItemUnloadRequest", { instanceIDs: ["item-1"], fileNames: [], allowUnloadingItemsLoadedByUserOrOtherPlugins: true }), session, host());
     expect((unloaded.data as { unloadedItems: unknown[] }).unloadedItems).toHaveLength(1);
+  });
+
+  it("pins and unpins items using official ArtMesh pin modes", async () => {
+    const session: VtsApiSession = { authenticated: true };
+    const pinned = await handleVtsApiRequest(request("ItemPinRequest", {
+      pin: true, itemInstanceID: "item-1", angleRelativeTo: "RelativeToModel", sizeRelativeTo: "RelativeToWorld", vertexPinType: "Provided",
+      pinInfo: { modelID: "haru", artMeshID: "HairFront", angle: 15, size: 0.3, vertexID1: 0, vertexID2: 1, vertexID3: 2, vertexWeight1: 0.2, vertexWeight2: 0.3, vertexWeight3: 0.5 }
+    }), session, host());
+    expect(pinned.messageType).toBe("ItemPinResponse");
+    expect((pinned.data as { isPinned: boolean }).isPinned).toBe(true);
+    const unpinned = await handleVtsApiRequest(request("ItemPinRequest", { pin: false, itemInstanceID: "item-1" }), session, host());
+    expect((unpinned.data as { isPinned: boolean }).isPinned).toBe(false);
+    const invalidWeights = await handleVtsApiRequest(request("ItemPinRequest", {
+      pin: true, itemInstanceID: "item-1", angleRelativeTo: "RelativeToWorld", sizeRelativeTo: "RelativeToWorld", vertexPinType: "Provided",
+      pinInfo: { size: 0.3, vertexID1: 0, vertexID2: 1, vertexID3: 2, vertexWeight1: 0.2, vertexWeight2: 0.2, vertexWeight3: 0.2 }
+    }), session, host());
+    expect((invalidWeights.data as { errorID: number }).errorID).toBe(1054);
+    const missing = await handleVtsApiRequest(request("ItemPinRequest", { pin: false, itemInstanceID: "missing" }), session, host());
+    expect((missing.data as { errorID: number }).errorID).toBe(1050);
   });
 });

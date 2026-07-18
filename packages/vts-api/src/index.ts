@@ -130,6 +130,30 @@ export interface VtsItemMoveInput {
   flip: boolean;
 }
 
+export type VtsItemPinAngleMode = "RelativeToWorld" | "RelativeToCurrentItemRotation" | "RelativeToModel" | "RelativeToPinPosition";
+export type VtsItemPinSizeMode = "RelativeToWorld" | "RelativeToCurrentItemSize";
+export type VtsItemVertexPinType = "Provided" | "Center" | "Random";
+
+export interface VtsItemPinInput {
+  pin: boolean;
+  itemInstanceID: string;
+  angleRelativeTo?: VtsItemPinAngleMode;
+  sizeRelativeTo?: VtsItemPinSizeMode;
+  vertexPinType?: VtsItemVertexPinType;
+  pinInfo?: {
+    modelID: string;
+    artMeshID: string;
+    angle: number;
+    size: number;
+    vertexID1: number;
+    vertexID2: number;
+    vertexID3: number;
+    vertexWeight1: number;
+    vertexWeight2: number;
+    vertexWeight3: number;
+  };
+}
+
 export interface VtsModelMoveInput {
   timeInSeconds: number;
   valuesAreRelativeToModel: boolean;
@@ -210,6 +234,7 @@ export interface VtsApiHost {
   loadItem(pluginName: string, pluginDeveloper: string, sessionID: string, input: VtsItemLoadInput): Promise<{ item?: VtsSceneItem; error?: "not-found" | "limit" | "order" }>;
   unloadItems(pluginName: string, pluginDeveloper: string, input: { unloadAllInScene: boolean; unloadAllLoadedByThisPlugin: boolean; allowOthers: boolean; instanceIDs: string[]; fileNames: string[] }): Promise<VtsSceneItem[]>;
   moveItems(inputs: VtsItemMoveInput[]): Promise<Array<{ itemInstanceID: string; success: boolean; errorID: number }>>;
+  pinItem(input: VtsItemPinInput): Promise<{ item?: VtsSceneItem; error?: "item-not-found" | "invalid-mode" | "model-not-found" | "artmesh-not-found" | "invalid-position" }>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -668,6 +693,61 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
       });
     }
     return response("ItemMoveResponse", requestID, { movedItems: await host.moveItems(inputs) });
+  }
+
+  if (request.messageType === "ItemPinRequest") {
+    const itemInstanceID = stringField(data, "itemInstanceID");
+    if (!itemInstanceID || typeof data.pin !== "boolean") return error(requestID, 1050, "A loaded item instance and pin state are required");
+    let input: VtsItemPinInput = { pin: data.pin, itemInstanceID };
+    if (data.pin) {
+      const angleRelativeTo = stringField(data, "angleRelativeTo");
+      const sizeRelativeTo = stringField(data, "sizeRelativeTo");
+      const vertexPinType = stringField(data, "vertexPinType");
+      const angleModes: VtsItemPinAngleMode[] = ["RelativeToWorld", "RelativeToCurrentItemRotation", "RelativeToModel", "RelativeToPinPosition"];
+      const sizeModes: VtsItemPinSizeMode[] = ["RelativeToWorld", "RelativeToCurrentItemSize"];
+      const vertexModes: VtsItemVertexPinType[] = ["Provided", "Center", "Random"];
+      if (!angleModes.includes(angleRelativeTo as VtsItemPinAngleMode) || !sizeModes.includes(sizeRelativeTo as VtsItemPinSizeMode) || !vertexModes.includes(vertexPinType as VtsItemVertexPinType)) {
+        return error(requestID, 1051, "Item pin angle, size, or vertex mode is invalid");
+      }
+      const rawPinInfo = objectData(data.pinInfo);
+      const modelID = stringField(rawPinInfo, "modelID") ?? "";
+      const artMeshID = stringField(rawPinInfo, "artMeshID") ?? "";
+      const finite = (key: string, fallback: number): number | undefined => rawPinInfo[key] === undefined ? fallback : typeof rawPinInfo[key] === "number" && Number.isFinite(rawPinInfo[key]) ? rawPinInfo[key] as number : undefined;
+      const integer = (key: string): number | undefined => Number.isInteger(rawPinInfo[key]) && (rawPinInfo[key] as number) >= 0 ? rawPinInfo[key] as number : undefined;
+      const angle = finite("angle", 0), size = finite("size", 0);
+      const vertexID1 = integer("vertexID1"), vertexID2 = integer("vertexID2"), vertexID3 = integer("vertexID3");
+      const vertexWeight1 = finite("vertexWeight1", 0), vertexWeight2 = finite("vertexWeight2", 0), vertexWeight3 = finite("vertexWeight3", 0);
+      const sizeValid = size !== undefined && (sizeRelativeTo === "RelativeToWorld" ? size >= 0 && size <= 1 : size >= -1 && size <= 1);
+      const providedValid = vertexPinType !== "Provided" || (
+        vertexID1 !== undefined && vertexID2 !== undefined && vertexID3 !== undefined &&
+        vertexWeight1 !== undefined && vertexWeight2 !== undefined && vertexWeight3 !== undefined &&
+        vertexWeight1 >= 0 && vertexWeight2 >= 0 && vertexWeight3 >= 0 &&
+        Math.abs(vertexWeight1 + vertexWeight2 + vertexWeight3 - 1) <= 1e-5
+      );
+      if (modelID.length > 256 || artMeshID.length > 256 || angle === undefined || Math.abs(angle) > 3600 || !sizeValid || !providedValid) {
+        return error(requestID, 1054, "Item pin position is invalid");
+      }
+      input = {
+        pin: true, itemInstanceID,
+        angleRelativeTo: angleRelativeTo as VtsItemPinAngleMode,
+        sizeRelativeTo: sizeRelativeTo as VtsItemPinSizeMode,
+        vertexPinType: vertexPinType as VtsItemVertexPinType,
+        pinInfo: {
+          modelID, artMeshID, angle, size,
+          vertexID1: vertexID1 ?? 0, vertexID2: vertexID2 ?? 0, vertexID3: vertexID3 ?? 0,
+          vertexWeight1: vertexWeight1 ?? 0, vertexWeight2: vertexWeight2 ?? 0, vertexWeight3: vertexWeight3 ?? 0
+        }
+      };
+    }
+    const pinned = await host.pinItem(input);
+    if (pinned.error === "item-not-found") return error(requestID, 1050, "The item instance is not loaded");
+    if (pinned.error === "invalid-mode") return error(requestID, 1051, "Item pin angle or size mode is invalid");
+    if (pinned.error === "model-not-found") return error(requestID, 1052, "The requested model is not loaded");
+    if (pinned.error === "artmesh-not-found") return error(requestID, 1053, "The requested ArtMesh was not found");
+    if (pinned.error === "invalid-position") return error(requestID, 1054, "Item pin position is invalid");
+    return response("ItemPinResponse", requestID, {
+      isPinned: data.pin, itemInstanceID: pinned.item!.instanceID, itemFileName: pinned.item!.fileName
+    });
   }
 
   if (request.messageType === "ParameterValueRequest") {

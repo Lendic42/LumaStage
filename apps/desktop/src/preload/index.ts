@@ -64,6 +64,7 @@ const bridge: LumaStageBridge = {
   deleteScene: (id) => ipcRenderer.invoke("delete-scene", id) as Promise<SceneWorkspace>,
   chooseSceneItem: (sceneId) => ipcRenderer.invoke("choose-scene-item", sceneId) as Promise<SceneWorkspace | null>,
   updateSceneItem: (sceneId, itemId, update: SceneItemUpdate) => ipcRenderer.invoke("update-scene-item", sceneId, itemId, update) as Promise<SceneWorkspace>,
+  unpinSceneItem: (sceneId, itemId) => ipcRenderer.invoke("unpin-scene-item", sceneId, itemId) as Promise<SceneWorkspace>,
   deleteSceneItem: (sceneId, itemId) => ipcRenderer.invoke("delete-scene-item", sceneId, itemId) as Promise<SceneWorkspace>,
   getCubismCoreStatus: () => ipcRenderer.invoke("cubism-core-status") as Promise<CubismCoreStatus>,
   installCubismCore: () => ipcRenderer.invoke("install-cubism-core") as Promise<CubismCoreStatus | null>,
@@ -72,7 +73,7 @@ const bridge: LumaStageBridge = {
   resolvePluginAuthorization: (id, approved) => ipcRenderer.invoke("resolve-plugin-authorization", id, approved) as Promise<boolean>,
   forgetPluginAccess: () => ipcRenderer.invoke("forget-plugin-access") as Promise<boolean>,
   notifyLocalHotkey: (hotkeyID) => ipcRenderer.invoke("notify-local-hotkey", hotkeyID) as Promise<boolean>,
-  reportArtMeshes: (modelDirectory, names) => ipcRenderer.invoke("report-artmeshes", modelDirectory, names) as Promise<boolean>
+  reportArtMeshes: (modelDirectory, meshes) => ipcRenderer.invoke("report-artmeshes", modelDirectory, meshes) as Promise<boolean>
 };
 
 contextBridge.exposeInMainWorld("lumastage", bridge);

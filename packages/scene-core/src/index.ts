@@ -17,6 +17,21 @@ export const sceneBackgroundSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("image"), imagePath: z.string().min(1).max(4096) })
 ]);
 
+export const sceneItemPinSchema = z.object({
+  modelID: z.string().min(1).max(256),
+  artMeshID: z.string().min(1).max(256),
+  angleRelativeTo: z.enum(["RelativeToWorld", "RelativeToModel", "RelativeToPinPosition"]),
+  angle: z.number().finite().min(-3600).max(3600),
+  vertexID1: z.number().int().nonnegative(),
+  vertexID2: z.number().int().nonnegative(),
+  vertexID3: z.number().int().nonnegative(),
+  vertexWeight1: z.number().finite().min(0).max(1),
+  vertexWeight2: z.number().finite().min(0).max(1),
+  vertexWeight3: z.number().finite().min(0).max(1)
+}).refine((pin) => Math.abs(pin.vertexWeight1 + pin.vertexWeight2 + pin.vertexWeight3 - 1) <= 1e-5, {
+  message: "Pin vertex weights must add up to one"
+});
+
 export const sceneItemSchema = z.object({
   id: z.string().uuid(),
   fileName: z.string().min(1).max(256),
@@ -32,6 +47,7 @@ export const sceneItemSchema = z.object({
   censored: z.boolean(),
   smoothing: z.number().finite().min(0).max(1),
   opacity: z.number().finite().min(0).max(1).default(1),
+  pin: sceneItemPinSchema.optional(),
   unloadWhenPluginDisconnects: z.boolean().default(false),
   ownerKey: z.string().max(128).optional(),
   ownerSessionID: z.string().max(128).optional()
@@ -67,6 +83,7 @@ export type SceneTransform = z.infer<typeof sceneTransformSchema>;
 export type SceneBackground = z.infer<typeof sceneBackgroundSchema>;
 export type ScenePreset = z.infer<typeof scenePresetSchema>;
 export type SceneItem = z.infer<typeof sceneItemSchema>;
+export type SceneItemPin = z.infer<typeof sceneItemPinSchema>;
 export type SceneLibrary = z.infer<typeof sceneLibrarySchema>;
 
 export function createDefaultSceneLibrary(id: string): SceneLibrary {

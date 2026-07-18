@@ -40,8 +40,9 @@ This preserves honest open-source licensing while still building real compatibil
 | VTube Studio event subscriptions | Compatible subset | Implemented for test, model, tracking, background, movement, hotkey and item event types |
 | Custom tracking parameter creation/deletion | Compatible subset | Implemented with persistence, ownership, limits and revocation cleanup |
 | PNG/JPG/GIF scene items and list/load/move/unload API | Compatible subset | Implemented with live canvas, persistent file catalog, ordering and disconnect cleanup |
+| ArtMesh item pin/unpin API | Compatible subset | Provided/Center/Random triangle selection, barycentric deformation following, angle/size modes and official 1050-1054 errors implemented |
 | Custom-data, animated-folder and Live2D item APIs | Incremental compatibility | Planned |
-| Remaining VTube Studio plugin API | Incremental compatibility | Advanced items, ArtMesh selection/pinning, hotkey configuration and additional events remain |
+| Remaining VTube Studio plugin API | Incremental compatibility | Advanced item animation/sorting, interactive ArtMesh selection, hotkey configuration, post-processing and additional events remain |
 | Encrypted/locked models | Respect protection; no bypass | By design |
 
 ### VTube Studio sidecars
