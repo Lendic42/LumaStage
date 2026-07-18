@@ -12,7 +12,7 @@ import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HO
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
 import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsArtMeshSelectionInput, type VtsArtMeshSelectionResult, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemAnimationControlInput, type VtsItemAnimationControlResult, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsPostProcessingState, type VtsPostProcessingUpdate, type VtsPostProcessingValue, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, inspectGifAnimation, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
-import { getVirtualCameraStatus, pushVirtualCameraFrame, startVirtualCamera, stopVirtualCamera } from "./virtualCamera/index.js";
+import { getVirtualCameraStatus, installDriverFromUi, pushVirtualCameraFrame, startVirtualCamera, stopVirtualCamera } from "./virtualCamera/index.js";
 import type { ArtMeshGeometry, ArtMeshSelectionPrompt, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
@@ -1976,6 +1976,7 @@ app.whenReady().then(async () => {
     return enabled ? startVirtualCamera(window) : stopVirtualCamera();
   });
   ipcMain.handle("get-virtual-camera-status", () => getVirtualCameraStatus());
+  ipcMain.handle("install-virtual-camera-driver", () => installDriverFromUi());
   ipcMain.handle("push-virtual-camera-frame", (_event, payload: unknown) => {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
     const body = payload as { width?: unknown; height?: unknown; rgba?: unknown };
