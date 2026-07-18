@@ -126,7 +126,7 @@ struct TrackerView: View {
 
             DisclosureGroup(isExpanded: $showManual) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Use when Bonjour fails (especially Windows) or for USB Personal Hotspot.")
+                    Text("Required on most Windows PCs (Bonjour often fails). Enter the first LAN IP from Desktop (usually 192.168.x) — not Tailscale/VPN tunnels. USB Personal Hotspot also works.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
