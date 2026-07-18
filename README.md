@@ -1,3 +1,5 @@
+**Languages:** **Русский** · [English](README.en.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [العربية](README.ar.md) · [Српски](README.sr.md)
+
 # LumaStage
 
 **Открытая VTuber-студия: десктоп для Windows/macOS + трекер на iPhone с Face ID.**
