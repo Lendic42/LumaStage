@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { ArtMeshSelectionPrompt, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, PostProcessingUpdate, SceneItemUpdate, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
+import type { ArtMeshSelectionPrompt, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, PostProcessingUpdate, SceneItemUpdate, SceneUpdate, SceneWorkspace, VirtualCameraStatus, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -85,6 +85,9 @@ const bridge: LumaStageBridge = {
   getCubismCoreStatus: () => ipcRenderer.invoke("cubism-core-status") as Promise<CubismCoreStatus>,
   installCubismCore: () => ipcRenderer.invoke("install-cubism-core") as Promise<CubismCoreStatus | null>,
   setOverlayMode: (enabled) => ipcRenderer.invoke("set-overlay-mode", enabled) as Promise<boolean>,
+  setVirtualCamera: (enabled) => ipcRenderer.invoke("set-virtual-camera", enabled) as Promise<VirtualCameraStatus>,
+  getVirtualCameraStatus: () => ipcRenderer.invoke("get-virtual-camera-status") as Promise<VirtualCameraStatus>,
+  pushVirtualCameraFrame: (frame) => ipcRenderer.invoke("push-virtual-camera-frame", frame) as Promise<boolean>,
   forgetTrustedDevices: () => ipcRenderer.invoke("forget-trusted-devices") as Promise<boolean>,
   resolvePluginAuthorization: (id, approved) => ipcRenderer.invoke("resolve-plugin-authorization", id, approved) as Promise<boolean>,
   forgetPluginAccess: () => ipcRenderer.invoke("forget-plugin-access") as Promise<boolean>,
