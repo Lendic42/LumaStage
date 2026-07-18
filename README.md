@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/Lendic42/LumaStage/releases/download/v0.1.0/LumaStage-icon.png" alt="LumaStage" width="128" height="128">
+  <img src="https://github.com/Lendic42/LumaStage/releases/download/v0.1.1/LumaStage-icon.png" alt="LumaStage" width="128" height="128">
 </p>
 
 <h1 align="center">LumaStage</h1>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#-скачать"><img src="https://img.shields.io/badge/download-v0.1.0-7c5cff?style=for-the-badge" alt="Download"></a>
+  <a href="#-скачать"><img src="https://img.shields.io/badge/download-v0.1.1-7c5cff?style=for-the-badge" alt="Download"></a>
   <a href="https://github.com/Lendic42/LumaStage/releases/latest"><img src="https://img.shields.io/github/v/release/Lendic42/LumaStage?style=for-the-badge&color=22c55e" alt="Release"></a>
   <a href="#-лицензия"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge" alt="License"></a>
 </p>
@@ -62,18 +62,18 @@ LumaStage собирает на сцене **Live2D-модели** (Cubism 3/4/5
 
 | 📁 Файл | 🖥️ Платформа |
 | --- | --- |
-| `LumaStage-macOS-0.1.0.dmg` | 🍎 macOS · установщик |
-| `LumaStage-macOS-0.1.0.zip` | 🍎 macOS · portable |
-| `LumaStage-Windows-0.1.0-Setup.exe` | 🪟 Windows · установщик |
-| `LumaStage-Windows-0.1.0-Portable.exe` | 🪟 Windows · portable |
-| `LumaStage-Tracker-0.1.0-unsigned.ipa` | 📱 iPhone · нужна своя подпись |
-| `LumaStage-0.1.0-source.zip` | 🧬 исходники релиза |
+| `LumaStage-macOS-0.1.1.dmg` | 🍎 macOS · установщик |
+| `LumaStage-macOS-0.1.1.zip` | 🍎 macOS · portable |
+| `LumaStage-Windows-0.1.1-Setup.exe` | 🪟 Windows · установщик |
+| `LumaStage-Windows-0.1.1-Portable.exe` | 🪟 Windows · portable |
+| `LumaStage-Tracker-0.1.1-unsigned.ipa` | 📱 iPhone · нужна своя подпись |
+| `LumaStage-0.1.1-source.zip` | 🧬 исходники релиза |
 
 ### 📱 iPhone (Tracker)
 
 IPA **не подписан**. Ставь через Feather / AltStore / Sideloadly / TrollStore — своим сертификатом.
 
-1. ⬇️ Скачай `LumaStage-Tracker-0.1.0-unsigned.ipa` из релиза  
+1. ⬇️ Скачай `LumaStage-Tracker-0.1.1-unsigned.ipa` из релиза  
 2. ✍️ Подпиши и установи на iPhone с Face ID  
 3. 🖥️ Запусти Desktop, открой пару по **6-значному коду**  
 4. 📶 Wi‑Fi: одна сеть **или** ручной IP из панели Connect Tracker **или** USB (Personal Hotspot по кабелю + IP ПК)  
@@ -152,5 +152,5 @@ Live2D Cubism Core, модели и чужие ассеты — по своим 
 [Star history chart ↗](https://www.star-history.com/#Lendic42/LumaStage&Date)
 
 <p align="center">
-  Made with 💜 for VTubers · <a href="https://github.com/Lendic42/LumaStage/releases/latest">Download v0.1.0</a>
+  Made with 💜 for VTubers · <a href="https://github.com/Lendic42/LumaStage/releases/latest">Download v0.1.1</a>
 </p>
