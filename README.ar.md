@@ -150,7 +150,7 @@ Live2D Cubism Core والنماذج وأصول الطرف الثالث لها ر
 
 ## ⭐ Star History
 
-[![Star History Chart](./star-history.svg)](https://www.star-history.com/#LumaStage&Date)
+[![Star History Chart](./star-history.png)](https://www.star-history.com/#LumaStage&Date)
 
 <p align="center">
   Made with 💜 for VTubers · <a href="https://github.com/Lendic42/LumaStage/releases/latest">Download v0.1.0</a>
