@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/Lendic42/LumaStage/releases/download/v0.1.0/LumaStage-icon.png" alt="LumaStage" width="128" height="128">
+  <img src="https://github.com/Lendic42/LumaStage/releases/download/v0.1.1/LumaStage-icon.png" alt="LumaStage" width="128" height="128">
 </p>
 
 <h1 align="center">LumaStage</h1>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#-download"><img src="https://img.shields.io/badge/download-v0.1.0-7c5cff?style=for-the-badge" alt="Download"></a>
+  <a href="#-download"><img src="https://img.shields.io/badge/download-v0.1.1-7c5cff?style=for-the-badge" alt="Download"></a>
   <a href="https://github.com/Lendic42/LumaStage/releases/latest"><img src="https://img.shields.io/github/v/release/Lendic42/LumaStage?style=for-the-badge&color=22c55e" alt="Release"></a>
   <a href="#-license"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge" alt="License"></a>
 </p>
@@ -62,18 +62,18 @@ Builds → **[Releases](https://github.com/Lendic42/LumaStage/releases/latest)**
 
 | 📁 File | 🖥️ Platform |
 | --- | --- |
-| `LumaStage-macOS-0.1.0.dmg` | 🍎 macOS · installer |
-| `LumaStage-macOS-0.1.0.zip` | 🍎 macOS · portable |
-| `LumaStage-Windows-0.1.0-Setup.exe` | 🪟 Windows · installer |
-| `LumaStage-Windows-0.1.0-Portable.exe` | 🪟 Windows · portable |
-| `LumaStage-Tracker-0.1.0-unsigned.ipa` | 📱 iPhone · you sign it |
-| `LumaStage-0.1.0-source.zip` | 🧬 release sources |
+| `LumaStage-macOS-0.1.1.dmg` | 🍎 macOS · installer |
+| `LumaStage-macOS-0.1.1.zip` | 🍎 macOS · portable |
+| `LumaStage-Windows-0.1.1-Setup.exe` | 🪟 Windows · installer |
+| `LumaStage-Windows-0.1.1-Portable.exe` | 🪟 Windows · portable |
+| `LumaStage-Tracker-0.1.1-unsigned.ipa` | 📱 iPhone · you sign it |
+| `LumaStage-0.1.1-source.zip` | 🧬 release sources |
 
 ### 📱 iPhone (Tracker)
 
 The IPA is **unsigned**. Install with Feather / AltStore / Sideloadly / TrollStore using your own certificate.
 
-1. ⬇️ Download `LumaStage-Tracker-0.1.0-unsigned.ipa` from the release  
+1. ⬇️ Download `LumaStage-Tracker-0.1.1-unsigned.ipa` from the release  
 2. ✍️ Sign and install on a Face ID iPhone  
 3. 🖥️ Start Desktop and pair with the **6-digit code**  
 4. 📶 Same Wi‑Fi **or** manual IP from Connect Tracker **or** USB (Personal Hotspot over cable + PC IP)  
@@ -152,5 +152,5 @@ See `THIRD_PARTY_NOTICES.md` and [docs/compatibility.md](docs/compatibility.md).
 [Star history chart ↗](https://www.star-history.com/#Lendic42/LumaStage&Date)
 
 <p align="center">
-  Made with 💜 for VTubers · <a href="https://github.com/Lendic42/LumaStage/releases/latest">Download v0.1.0</a>
+  Made with 💜 for VTubers · <a href="https://github.com/Lendic42/LumaStage/releases/latest">Download v0.1.1</a>
 </p>
