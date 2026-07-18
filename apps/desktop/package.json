@@ -20,6 +20,7 @@
   "devDependencies": {
     "@lumastage/model-compat": "0.1.0",
     "@lumastage/protocol": "0.1.0",
+    "@lumastage/scene-core": "0.1.0",
     "@lumastage/tracking-core": "0.1.0",
     "@lumastage/vts-api": "0.1.0",
     "@types/node": "^24.0.15",

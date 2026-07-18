@@ -9,11 +9,13 @@ import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lu
 import { inspectCubismModelFolder } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
 import { handleVtsApiRequest, type VtsApiHost, type VtsApiSession, type VtsCurrentModel, type VtsParameter } from "@lumastage/vts-api";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, VtsParameterInjection } from "../shared/bridge.js";
+import { createDefaultSceneLibrary, normalizeSceneTransform, parseSceneLibrary, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, PluginAuthorizationRequest, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
-  { scheme: "lumastage-core", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }
+  { scheme: "lumastage-core", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+  { scheme: "lumastage-background", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
 ]);
 
 const TRACKING_PORT = 39510;
@@ -30,6 +32,9 @@ let bonjour: Bonjour | undefined;
 let activeModelRoot: string | undefined;
 let activeApiModel: VtsCurrentModel | undefined;
 let activeImportedModel: ImportedModel | undefined;
+let sceneLibrary: StoredSceneLibrary = createDefaultSceneLibrary(randomUUID());
+let activeBackgroundPath: string | undefined;
+let sceneSaveQueue: Promise<void> = Promise.resolve();
 let latestTrackingFrame: TrackingFrame | undefined;
 let injectedFaceFound: { value: boolean; expiresAt: number } | undefined;
 const injectedInputs = new Map<string, { value: number; weight: number; mode: "set" | "add"; expiresAt: number }>();
@@ -46,6 +51,83 @@ function trustedDevicesPath(): string {
 
 function pluginAccessPath(): string {
   return join(app.getPath("userData"), "plugin-api-access.json");
+}
+
+function scenesPath(): string {
+  return join(app.getPath("userData"), "scenes.json");
+}
+
+function storedActiveScene(): StoredScenePreset {
+  return sceneLibrary.scenes.find((scene) => scene.id === sceneLibrary.activeSceneId) ?? sceneLibrary.scenes[0];
+}
+
+function publicScene(scene: StoredScenePreset): ScenePreset {
+  return {
+    id: scene.id,
+    name: scene.name,
+    background: scene.background.kind === "image"
+      ? { kind: "image", imageUrl: scene.id === sceneLibrary.activeSceneId ? "lumastage-background://active/image" : "" }
+      : scene.background,
+    transform: scene.transform,
+    modelName: scene.modelName
+  };
+}
+
+function publicSceneLibrary(): SceneLibrary {
+  return { version: 1, activeSceneId: sceneLibrary.activeSceneId, scenes: sceneLibrary.scenes.map(publicScene) };
+}
+
+function saveScenes(): Promise<void> {
+  const payload = `${JSON.stringify(sceneLibrary, null, 2)}\n`;
+  const operation = sceneSaveQueue.catch(() => undefined).then(async () => {
+    await mkdir(app.getPath("userData"), { recursive: true });
+    await writeFile(scenesPath(), payload, { encoding: "utf8", mode: 0o600 });
+  });
+  sceneSaveQueue = operation;
+  return operation;
+}
+
+async function loadScenes(): Promise<void> {
+  const fallbackId = randomUUID();
+  try {
+    sceneLibrary = parseSceneLibrary(JSON.parse(await readFile(scenesPath(), "utf8")), fallbackId);
+  } catch {
+    sceneLibrary = createDefaultSceneLibrary(fallbackId);
+  }
+  await saveScenes();
+  const background = storedActiveScene().background;
+  activeBackgroundPath = background.kind === "image" ? background.imagePath : undefined;
+}
+
+function clearActiveModel(): void {
+  activeModelRoot = undefined;
+  activeApiModel = undefined;
+  activeImportedModel = undefined;
+}
+
+async function loadActiveSceneModel(): Promise<ImportedModel | null> {
+  const scene = storedActiveScene();
+  activeBackgroundPath = scene.background.kind === "image" ? scene.background.imagePath : undefined;
+  if (!scene.modelDirectory) {
+    clearActiveModel();
+    return null;
+  }
+  try {
+    return await inspectModelDirectory(scene.modelDirectory);
+  } catch {
+    clearActiveModel();
+    return null;
+  }
+}
+
+async function sceneWorkspace(reloadModel = false): Promise<SceneWorkspace> {
+  const model = reloadModel ? await loadActiveSceneModel() : activeImportedModel ?? null;
+  return { library: publicSceneLibrary(), model };
+}
+
+function requireSceneId(value: unknown): string {
+  if (typeof value !== "string" || !sceneLibrary.scenes.some((scene) => scene.id === value)) throw new Error("Scene does not exist");
+  return value;
 }
 
 function pluginKey(name: string, developer: string): string {
@@ -255,6 +337,21 @@ function installAssetProtocols(): void {
       return await net.fetch(pathToFileURL(cubismCorePath()).toString());
     } catch {
       return new Response("Cubism Core is not installed", { status: 404 });
+    }
+  });
+
+  void session.defaultSession.protocol.handle("lumastage-background", async (request) => {
+    const url = new URL(request.url);
+    if (url.host !== "active" || url.pathname !== "/image" || !activeBackgroundPath) {
+      return new Response("Unknown scene background", { status: 404 });
+    }
+    try {
+      const image = await realpath(activeBackgroundPath);
+      const imageStat = await stat(image);
+      if (!imageStat.isFile() || imageStat.size > 50 * 1024 * 1024) return new Response("Invalid scene background", { status: 403 });
+      return await net.fetch(pathToFileURL(image).toString());
+    } catch {
+      return new Response("Scene background not found", { status: 404 });
     }
   });
 }
@@ -483,7 +580,80 @@ app.whenReady().then(async () => {
   ipcMain.handle("import-model", async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
     if (result.canceled || !result.filePaths[0]) return null;
-    return inspectModelDirectory(result.filePaths[0]);
+    const model = await inspectModelDirectory(result.filePaths[0]);
+    const active = storedActiveScene();
+    active.modelDirectory = model.directory;
+    active.modelName = model.vTubeModelName ?? model.name;
+    await saveScenes();
+    return model;
+  });
+  ipcMain.handle("get-scene-workspace", () => sceneWorkspace());
+  ipcMain.handle("create-scene", async (_event, requestedName: unknown) => {
+    if (sceneLibrary.scenes.length >= 64) throw new Error("Scene limit reached");
+    const id = randomUUID();
+    const name = typeof requestedName === "string" && requestedName.trim() ? requestedName.trim().slice(0, 48) : `Scene ${sceneLibrary.scenes.length + 1}`;
+    sceneLibrary.scenes.push({
+      id,
+      name,
+      background: { kind: "gradient", preset: "studio" },
+      transform: { scale: 1, positionX: 0, positionY: 0, rotation: 0, mirror: false }
+    });
+    sceneLibrary.activeSceneId = id;
+    clearActiveModel();
+    activeBackgroundPath = undefined;
+    await saveScenes();
+    return sceneWorkspace();
+  });
+  ipcMain.handle("activate-scene", async (_event, requestedId: unknown) => {
+    sceneLibrary.activeSceneId = requireSceneId(requestedId);
+    await saveScenes();
+    return sceneWorkspace(true);
+  });
+  ipcMain.handle("update-scene", async (_event, requestedId: unknown, requestedUpdate: unknown) => {
+    const id = requireSceneId(requestedId);
+    if (!requestedUpdate || typeof requestedUpdate !== "object" || Array.isArray(requestedUpdate)) throw new Error("Invalid scene update");
+    const update = requestedUpdate as SceneUpdate;
+    const scene = sceneLibrary.scenes.find((item) => item.id === id)!;
+    if (update.name !== undefined) {
+      if (typeof update.name !== "string" || !update.name.trim()) throw new Error("Scene name cannot be empty");
+      scene.name = update.name.trim().slice(0, 48);
+    }
+    if (update.transform !== undefined) scene.transform = normalizeSceneTransform(update.transform, scene.transform);
+    if (update.background !== undefined) {
+      const background = update.background;
+      if (background.kind === "color" && /^#[0-9a-fA-F]{6}$/.test(background.color)) scene.background = { kind: "color", color: background.color };
+      else if (background.kind === "gradient" && ["violet", "sunset", "ocean", "studio", "transparent"].includes(background.preset)) scene.background = { kind: "gradient", preset: background.preset };
+      else throw new Error("Invalid scene background");
+      if (id === sceneLibrary.activeSceneId) activeBackgroundPath = undefined;
+    }
+    await saveScenes();
+    return sceneWorkspace();
+  });
+  ipcMain.handle("choose-scene-background", async (_event, requestedId: unknown) => {
+    const id = requireSceneId(requestedId);
+    const result = await dialog.showOpenDialog({
+      title: "Choose a scene background",
+      properties: ["openFile"],
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }]
+    });
+    const imagePath = result.filePaths[0];
+    if (result.canceled || !imagePath) return null;
+    const imageStat = await stat(imagePath);
+    if (!imageStat.isFile() || imageStat.size > 50 * 1024 * 1024) throw new Error("Background image must be smaller than 50 MB");
+    const scene = sceneLibrary.scenes.find((item) => item.id === id)!;
+    scene.background = { kind: "image", imagePath: await realpath(imagePath) };
+    if (id === sceneLibrary.activeSceneId) activeBackgroundPath = scene.background.imagePath;
+    await saveScenes();
+    return sceneWorkspace();
+  });
+  ipcMain.handle("delete-scene", async (_event, requestedId: unknown) => {
+    const id = requireSceneId(requestedId);
+    if (sceneLibrary.scenes.length === 1) throw new Error("The last scene cannot be deleted");
+    const deletingActive = id === sceneLibrary.activeSceneId;
+    sceneLibrary.scenes = sceneLibrary.scenes.filter((scene) => scene.id !== id);
+    if (deletingActive) sceneLibrary.activeSceneId = sceneLibrary.scenes[0].id;
+    await saveScenes();
+    return sceneWorkspace(deletingActive);
   });
   ipcMain.handle("cubism-core-status", coreStatus);
   ipcMain.handle("install-cubism-core", async () => {
@@ -539,7 +709,8 @@ app.whenReady().then(async () => {
     publishStatus();
     return true;
   });
-  await Promise.all([loadTrustedDevices(), loadPluginAccess()]);
+  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadScenes()]);
+  await loadActiveSceneModel();
   startTrackingServer();
   startVtsApiServer();
   createWindow();

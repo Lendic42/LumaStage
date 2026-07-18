@@ -3,7 +3,7 @@ import { Application } from "pixi.js";
 import type { Live2DModel as Live2DModelType, Cubism4InternalModel } from "pixi-live2d-display/cubism4";
 import { TrackingEngine } from "@lumastage/tracking-core";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { ImportedHotkey, ImportedModel, VtsParameterInjection } from "../../shared/bridge";
+import type { ImportedHotkey, ImportedModel, SceneTransform, VtsParameterInjection } from "../../shared/bridge";
 
 interface Props {
   model: ImportedModel | null;
@@ -11,6 +11,7 @@ interface Props {
   calibrationNonce: number;
   hotkeyRequest: { nonce: number; hotkey: ImportedHotkey } | null;
   parameterInjection: { nonce: number; value: VtsParameterInjection } | null;
+  sceneTransform: SceneTransform;
   onReady(ready: boolean): void;
   onError(message: string | null): void;
 }
@@ -38,11 +39,18 @@ function loadCubismCore(): Promise<void> {
   return loading;
 }
 
-export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, onReady, onError }: Props) {
+export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRequest, parameterInjection, sceneTransform, onReady, onError }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef(new TrackingEngine());
   const hotkeyHandlerRef = useRef<((hotkey: ImportedHotkey) => Promise<void>) | null>(null);
+  const sceneTransformRef = useRef(sceneTransform);
+  const fitHandlerRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    sceneTransformRef.current = sceneTransform;
+    fitHandlerRef.current?.();
+  }, [sceneTransform]);
 
   useEffect(() => {
     engineRef.current.ingest(frame);
@@ -115,11 +123,14 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
         const height = containerRef.current.clientHeight;
         const sourceWidth = liveModel.internalModel.width;
         const sourceHeight = liveModel.internalModel.height;
-        const scale = Math.min(width / sourceWidth, height / sourceHeight) * 0.88;
-        liveModel.scale.set(scale);
+        const transform = sceneTransformRef.current;
+        const scale = Math.min(width / sourceWidth, height / sourceHeight) * 0.88 * transform.scale;
+        liveModel.scale.set(transform.mirror ? -scale : scale, scale);
         liveModel.anchor.set(0.5, 0.5);
-        liveModel.position.set(width / 2, height / 2 + height * 0.04);
+        liveModel.position.set(width / 2 + width * transform.positionX * 0.5, height / 2 + height * (0.04 + transform.positionY * 0.5));
+        liveModel.rotation = transform.rotation * Math.PI / 180;
       };
+      fitHandlerRef.current = fit;
 
       const eventedInternalModel = liveModel.internalModel as Cubism4InternalModel & {
         on(event: "beforeModelUpdate", listener: () => void): void;
@@ -176,6 +187,7 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
     return () => {
       disposed = true;
       hotkeyHandlerRef.current = null;
+      fitHandlerRef.current = null;
       resizeObserver?.disconnect();
       if (liveModel && !liveModel.destroyed) liveModel.destroy({ children: true, texture: true, baseTexture: true });
       app?.destroy(false, { children: false, texture: false, baseTexture: false });

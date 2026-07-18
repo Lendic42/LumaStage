@@ -28,6 +28,7 @@ This preserves honest open-source licensing while still building real compatibil
 | Common VTube Studio parameter mappings | Import with standard-ID fallback | Implemented for documented/common tracking inputs |
 | VTube Studio expression/motion hotkeys | Best effort; unsupported actions reported | Imported and executable from inspector |
 | VTube Studio scenes/model-changing hotkeys | Best effort | Planned |
+| LumaStage scene presets | Native equivalent | Implemented with model binding, backgrounds and transforms |
 | VTube Studio plugin authentication/state/statistics | Compatible subset | Implemented and packaged-runtime tested on localhost:8001 |
 | Current model, face-found and model hotkey API | Compatible subset | Implemented; hotkeys limited to supported imported actions |
 | Input/Live2D parameter reads and timed parameter injection | Compatible subset | Implemented with set/add, weights and one-second expiry |

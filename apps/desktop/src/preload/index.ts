@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { TrackingFrame } from "@lumastage/protocol";
-import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, VtsParameterInjection } from "../shared/bridge.js";
+import type { CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, PluginAuthorizationRequest, SceneUpdate, SceneWorkspace, VtsParameterInjection } from "../shared/bridge.js";
 
 const bridge: LumaStageBridge = {
   onTrackingFrame(listener) {
@@ -29,6 +29,12 @@ const bridge: LumaStageBridge = {
     return () => ipcRenderer.removeListener("vts-parameter-injection", handler);
   },
   importModel: () => ipcRenderer.invoke("import-model") as Promise<ImportedModel | null>,
+  getSceneWorkspace: () => ipcRenderer.invoke("get-scene-workspace") as Promise<SceneWorkspace>,
+  createScene: (name) => ipcRenderer.invoke("create-scene", name) as Promise<SceneWorkspace>,
+  activateScene: (id) => ipcRenderer.invoke("activate-scene", id) as Promise<SceneWorkspace>,
+  updateScene: (id, update: SceneUpdate) => ipcRenderer.invoke("update-scene", id, update) as Promise<SceneWorkspace>,
+  chooseSceneBackground: (id) => ipcRenderer.invoke("choose-scene-background", id) as Promise<SceneWorkspace | null>,
+  deleteScene: (id) => ipcRenderer.invoke("delete-scene", id) as Promise<SceneWorkspace>,
   getCubismCoreStatus: () => ipcRenderer.invoke("cubism-core-status") as Promise<CubismCoreStatus>,
   installCubismCore: () => ipcRenderer.invoke("install-cubism-core") as Promise<CubismCoreStatus | null>,
   setOverlayMode: (enabled) => ipcRenderer.invoke("set-overlay-mode", enabled) as Promise<boolean>,

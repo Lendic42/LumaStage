@@ -16,6 +16,8 @@ Electron provides one Windows/macOS UI and a Chromium WebGL surface. The main pr
 
 The VTube Studio-compatible plugin API is a second WebSocket server bound only to `127.0.0.1:8001`. Its request/response core is isolated in `packages/vts-api` and tested independently. Authentication tokens are shown only once to an approved plugin; LumaStage persists SHA-256 hashes, requires a visible per-plugin approval and can revoke all plugin sessions from the UI.
 
+Scene documents are validated by the isolated `packages/scene-core` package and persisted as a versioned JSON library in the application's user-data directory. Only the main process sees model/background paths. The renderer receives display metadata and fixed custom-protocol URLs for the active assets.
+
 The renderer boundary is an adapter rather than a direct dependency on one model engine:
 
 - `CubismRenderer`: existing `.moc3`/`.model3.json` models through an installed Cubism Core.
@@ -36,7 +38,7 @@ Security model:
 3. A remembered device receives a random 256-bit token; the desktop persists only its SHA-256 hash and iOS stores the token in the device-only Keychain.
 4. Raw camera images are never transmitted.
 
-The current milestone implements discovery, framed transport and persistent pairing. LumaLink v1 is local-network WebSocket rather than TLS, so a future public release should add encrypted transport and a trusted-device revocation UI for hostile/shared LANs.
+The current milestone implements discovery, framed transport, persistent pairing and revocation. LumaLink v1 is local-network WebSocket rather than TLS, so a future public release should add encrypted transport for hostile/shared LANs.
 
 ## Frame processing
 

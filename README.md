@@ -5,7 +5,7 @@ LumaStage is a free and open-source VTuber studio built around two apps:
 - **LumaStage Desktop** for Windows and macOS: model rendering, parameter mapping, scenes, hotkeys and OBS output.
 - **LumaStage Tracker** for Face ID iPhones: private, low-latency TrueDepth face tracking over the local network.
 
-The project is under active development. The current milestone includes the complete ARKit-to-desktop tracking path, safe Cubism/VTube Studio model import, a Pixi WebGL renderer adapter, calibration/smoothing and cross-platform packaging.
+The project is under active development. The current milestone includes the complete ARKit-to-desktop tracking path, safe Cubism/VTube Studio model import, a Pixi WebGL renderer adapter, calibration/smoothing, persistent scenes and cross-platform packaging.
 
 ## Principles
 
@@ -22,6 +22,7 @@ apps/desktop       Electron + React desktop application
 apps/ios           Native SwiftUI + ARKit tracker
 packages/protocol  Versioned tracking protocol and validation
 packages/vts-api   Tested VTube Studio Plugin API compatibility core
+packages/scene-core  Validated, versioned scene persistence
 docs               Architecture and compatibility notes
 ```
 
@@ -48,6 +49,10 @@ After that, import a folder containing one `*.model3.json`. LumaStage serves mod
 The importer rejects absolute/path-traversal asset references and reports missing files before rendering.
 
 The stage toolbar includes a transparent always-on-top overlay for OBS/window capture. Imported VTube Studio expression and motion hotkeys are shown in the inspector; actions that cannot be mapped safely are reported instead of guessed.
+
+## Scenes
+
+Desktop scene presets persist the selected model, background and model transform. A scene can use a built-in gradient, solid color or local PNG/JPEG/WebP/GIF image, plus scale, X/Y offset, rotation and mirroring. Background files are exposed to the sandboxed renderer through a read-only protocol scoped to the active file; arbitrary filesystem paths cannot be requested from the UI.
 
 ## VTube Studio Plugin API compatibility
 

@@ -10,9 +10,9 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @lumastage/desktop",
-    "build": "npm run build -w @lumastage/protocol && npm run build -w @lumastage/model-compat && npm run build -w @lumastage/tracking-core && npm run build -w @lumastage/vts-api && npm run build -w @lumastage/desktop",
-    "test": "npm run test -w @lumastage/protocol && npm run test -w @lumastage/model-compat && npm run test -w @lumastage/tracking-core && npm run test -w @lumastage/vts-api",
-    "typecheck": "npm run build -w @lumastage/protocol && npm run build -w @lumastage/model-compat && npm run build -w @lumastage/tracking-core && npm run build -w @lumastage/vts-api && npm run typecheck -w @lumastage/desktop",
+    "build": "npm run build -w @lumastage/protocol && npm run build -w @lumastage/model-compat && npm run build -w @lumastage/tracking-core && npm run build -w @lumastage/vts-api && npm run build -w @lumastage/scene-core && npm run build -w @lumastage/desktop",
+    "test": "npm run test -w @lumastage/protocol && npm run test -w @lumastage/model-compat && npm run test -w @lumastage/tracking-core && npm run test -w @lumastage/vts-api && npm run test -w @lumastage/scene-core",
+    "typecheck": "npm run build -w @lumastage/protocol && npm run build -w @lumastage/model-compat && npm run build -w @lumastage/tracking-core && npm run build -w @lumastage/vts-api && npm run build -w @lumastage/scene-core && npm run typecheck -w @lumastage/desktop",
     "package:mac": "npm run build && npm run package:mac -w @lumastage/desktop",
     "package:win": "npm run build && npm run package:win -w @lumastage/desktop"
   },
