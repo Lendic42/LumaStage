@@ -117,6 +117,13 @@ export interface SceneItem {
   flipped: boolean;
   locked: boolean;
   opacity: number;
+  brightness: number;
+  animationFramerate: number;
+  animationFrame: number;
+  animationFrameCount: number;
+  animationPlaying: boolean;
+  animationAutoStopFrames: number[];
+  animationRevision: number;
   pin?: SceneItemPin;
 }
 
@@ -157,6 +164,10 @@ export interface SceneItemUpdate {
   flipped?: boolean;
   locked?: boolean;
   opacity?: number;
+  brightness?: number;
+  animationFramerate?: number;
+  animationFrame?: number;
+  animationPlaying?: boolean;
 }
 
 export interface SceneLibrary {
@@ -261,4 +272,5 @@ export interface LumaStageBridge {
   forgetPluginAccess(): Promise<boolean>;
   notifyLocalHotkey(hotkeyID: string): Promise<boolean>;
   reportArtMeshes(modelDirectory: string, meshes: ArtMeshGeometry[]): Promise<boolean>;
+  reportItemAnimationState(itemID: string, state: { frameCount: number; currentFrame: number; framerate: number; animationPlaying: boolean }): Promise<boolean>;
 }

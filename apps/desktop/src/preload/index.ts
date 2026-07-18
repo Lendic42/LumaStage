@@ -89,7 +89,8 @@ const bridge: LumaStageBridge = {
   resolvePluginAuthorization: (id, approved) => ipcRenderer.invoke("resolve-plugin-authorization", id, approved) as Promise<boolean>,
   forgetPluginAccess: () => ipcRenderer.invoke("forget-plugin-access") as Promise<boolean>,
   notifyLocalHotkey: (hotkeyID) => ipcRenderer.invoke("notify-local-hotkey", hotkeyID) as Promise<boolean>,
-  reportArtMeshes: (modelDirectory, meshes) => ipcRenderer.invoke("report-artmeshes", modelDirectory, meshes) as Promise<boolean>
+  reportArtMeshes: (modelDirectory, meshes) => ipcRenderer.invoke("report-artmeshes", modelDirectory, meshes) as Promise<boolean>,
+  reportItemAnimationState: (itemID, state) => ipcRenderer.invoke("report-item-animation-state", itemID, state) as Promise<boolean>
 };
 
 contextBridge.exposeInMainWorld("lumastage", bridge);

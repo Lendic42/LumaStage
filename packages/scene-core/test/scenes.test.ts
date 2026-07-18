@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, sceneLibrarySchema, type SceneItem } from "../src/index.js";
+import { createDefaultSceneLibrary, inspectGifAnimation, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, sceneLibrarySchema, type SceneItem } from "../src/index.js";
 
 const id = "91d80ee3-1a6d-45d5-a0ca-f50c53dc1a25";
 
@@ -33,7 +33,7 @@ describe("scene library", () => {
   });
 
   it("clamps visual item transforms", () => {
-    const item: SceneItem = { id, fileName: "hat.png", filePath: "/tmp/hat.png", type: "PNG", positionX: 0, positionY: 0, size: 0.32, rotation: 0, order: 1, flipped: false, locked: false, censored: false, smoothing: 0, opacity: 1, unloadWhenPluginDisconnects: false };
+    const item: SceneItem = { id, fileName: "hat.png", filePath: "/tmp/hat.png", type: "PNG", positionX: 0, positionY: 0, size: 0.32, rotation: 0, order: 1, flipped: false, locked: false, censored: false, smoothing: 0, opacity: 1, brightness: 1, animationFramerate: 30, animationFrame: 0, animationPlaying: true, animationAutoStopFrames: [], animationRevision: 0, unloadWhenPluginDisconnects: false };
     const output = normalizeSceneItemTransform({ positionX: 5000, size: 0, rotation: -9000, opacity: 2, flipped: true }, item);
     expect(output).toMatchObject({ positionX: 1000, size: 0, rotation: -3600, opacity: 1, flipped: true });
   });
@@ -43,7 +43,8 @@ describe("scene library", () => {
     library.scenes[0].items.push({
       id, fileName: "hat.png", filePath: "/tmp/hat.png", type: "PNG", positionX: 0, positionY: 0,
       size: 0.32, rotation: 0, order: 1, flipped: false, locked: false, censored: false, smoothing: 0,
-      opacity: 1, unloadWhenPluginDisconnects: false,
+      opacity: 1, brightness: 1, animationFramerate: 30, animationFrame: 0, animationPlaying: true,
+      animationAutoStopFrames: [], animationRevision: 0, unloadWhenPluginDisconnects: false,
       pin: {
         modelID: "haru", artMeshID: "HairFront", angleRelativeTo: "RelativeToPinPosition", angle: 12,
         vertexID1: 0, vertexID2: 1, vertexID3: 2, vertexWeight1: 0.2, vertexWeight2: 0.3, vertexWeight3: 0.5
@@ -52,5 +53,12 @@ describe("scene library", () => {
     expect(parseSceneLibrary(library, id).scenes[0].items[0].pin?.artMeshID).toBe("HairFront");
     library.scenes[0].items[0].pin!.vertexWeight3 = 0.6;
     expect(parseSceneLibrary(library, id).scenes[0].items).toEqual([]);
+  });
+
+  it("reads GIF frame count and average source framerate without decoding pixels", () => {
+    const header = [71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 0, 0, 0];
+    const frame = (delay: number) => [33, 249, 4, 0, delay & 255, delay >> 8, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 1, 0, 0];
+    expect(inspectGifAnimation(Uint8Array.from([...header, ...frame(5), ...frame(15), 59]))).toEqual({ frameCount: 2, framerate: 10 });
+    expect(inspectGifAnimation(Uint8Array.from([1, 2, 3]))).toBeUndefined();
   });
 });

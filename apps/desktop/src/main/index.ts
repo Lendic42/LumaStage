@@ -8,8 +8,8 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
 import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HOTKEY_MOTION_GROUP } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsArtMeshSelectionInput, type VtsArtMeshSelectionResult, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsPostProcessingState, type VtsPostProcessingUpdate, type VtsPostProcessingValue, type VtsSceneItem } from "@lumastage/vts-api";
-import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
+import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsArtMeshSelectionInput, type VtsArtMeshSelectionResult, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemAnimationControlInput, type VtsItemAnimationControlResult, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsPostProcessingState, type VtsPostProcessingUpdate, type VtsPostProcessingValue, type VtsSceneItem } from "@lumastage/vts-api";
+import { createDefaultSceneLibrary, inspectGifAnimation, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
 import type { ArtMeshGeometry, ArtMeshSelectionPrompt, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
@@ -62,6 +62,7 @@ const customParameters = new Map<string, StoredCustomParameter>();
 let customParameterSaveQueue: Promise<void> = Promise.resolve();
 interface ItemFileEntry { fileName: string; filePath: string; type: "PNG" | "JPG" | "GIF" }
 const itemFiles = new Map<string, ItemFileEntry>();
+const itemAnimationRuntime = new Map<string, { frameCount: number; currentFrame: number; framerate: number; animationPlaying: boolean }>();
 let itemFileSaveQueue: Promise<void> = Promise.resolve();
 const postProcessingDefaults: Record<string, VtsPostProcessingValue> = {
   ColorGrading_Strength: 0, ColorGrading_HueShift: 0, ColorGrading_Saturation: 0, ColorGrading_Brightness: 0,
@@ -335,10 +336,14 @@ function publicScene(scene: StoredScenePreset): ScenePreset {
 }
 
 function publicSceneItem(item: StoredSceneItem): SceneItem {
+  const animation = itemAnimationRuntime.get(item.id);
   return {
     id: item.id, fileName: item.fileName, imageUrl: `lumastage-item://active/${encodeURIComponent(item.id)}`, type: item.type,
     positionX: item.positionX, positionY: item.positionY, size: item.size, rotation: item.rotation, order: item.order,
-    flipped: item.flipped, locked: item.locked, opacity: item.opacity, pin: item.pin
+    flipped: item.flipped, locked: item.locked, opacity: item.opacity, brightness: item.brightness,
+    animationFramerate: animation?.framerate ?? item.animationFramerate, animationFrame: animation?.currentFrame ?? item.animationFrame,
+    animationFrameCount: item.type === "GIF" ? animation?.frameCount ?? 1 : -1, animationPlaying: animation?.animationPlaying ?? item.animationPlaying,
+    animationAutoStopFrames: item.animationAutoStopFrames, animationRevision: item.animationRevision, pin: item.pin
   };
 }
 
@@ -470,13 +475,36 @@ function itemEventData(item: StoredSceneItem, itemEventType: string): Record<str
 }
 
 function vtsSceneItem(item: StoredSceneItem): VtsSceneItem {
+  const animation = itemAnimationRuntime.get(item.id);
   return {
     fileName: item.fileName, instanceID: item.id, order: item.order, type: item.type, censored: item.censored,
     flipped: item.flipped, locked: item.locked, smoothing: item.smoothing,
-    framerate: item.type === "GIF" ? 30 : 0, frameCount: item.type === "GIF" ? 1 : -1, currentFrame: item.type === "GIF" ? 0 : -1,
+    framerate: item.type === "GIF" ? animation?.framerate ?? item.animationFramerate : 0,
+    frameCount: item.type === "GIF" ? animation?.frameCount ?? 1 : -1,
+    currentFrame: item.type === "GIF" ? animation?.currentFrame ?? item.animationFrame : -1,
     pinnedToModel: Boolean(item.pin), pinnedModelID: item.pin?.modelID ?? "", pinnedArtMeshID: item.pin?.artMeshID ?? "",
     groupName: "", sceneName: storedActiveScene().name, fromWorkshop: false
   };
+}
+
+async function prepareGifAnimation(item: StoredSceneItem): Promise<void> {
+  if (item.type !== "GIF") return;
+  try {
+    const metadata = inspectGifAnimation(await readFile(item.filePath));
+    if (!metadata) return;
+    itemAnimationRuntime.set(item.id, {
+      frameCount: metadata.frameCount,
+      currentFrame: Math.min(item.animationFrame, metadata.frameCount - 1),
+      framerate: item.animationFramerate,
+      animationPlaying: item.animationPlaying
+    });
+  } catch {
+    // The asset protocol/renderer will surface unreadable or invalid image files.
+  }
+}
+
+async function prepareAllGifAnimations(): Promise<void> {
+  await Promise.all(sceneLibrary.scenes.flatMap((scene) => scene.items.map(prepareGifAnimation)));
 }
 
 function broadcastSceneWorkspace(): void {
@@ -524,10 +552,13 @@ async function loadVtsItem(pluginName: string, pluginDeveloper: string, ownerSes
     id: randomUUID(), fileName: source.fileName, filePath: source.filePath, type: source.type,
     positionX: input.positionX, positionY: input.positionY, size: input.size,
     rotation: input.rotation, order, smoothing: input.smoothing, censored: input.censored, flipped: input.flipped,
-    locked: input.locked, opacity: 1, unloadWhenPluginDisconnects: input.unloadWhenPluginDisconnects,
+    locked: input.locked, opacity: 1, brightness: 1, animationFramerate: 30, animationFrame: 0,
+    animationPlaying: true, animationAutoStopFrames: [], animationRevision: 0,
+    unloadWhenPluginDisconnects: input.unloadWhenPluginDisconnects,
     ownerKey: pluginKey(pluginName, pluginDeveloper), ownerSessionID
   };
   scene.items.push(item);
+  await prepareGifAnimation(item);
   await saveScenes();
   broadcastSceneWorkspace();
   sendVtsEvent("ItemEvent", itemEventData(item, "Added"));
@@ -546,10 +577,42 @@ async function unloadVtsItems(pluginName: string, pluginDeveloper: string, input
   if (removed.length === 0) return [];
   const removedIDs = new Set(removed.map((item) => item.id));
   scene.items = scene.items.filter((item) => !removedIDs.has(item.id));
+  for (const id of removedIDs) itemAnimationRuntime.delete(id);
   await saveScenes();
   broadcastSceneWorkspace();
   for (const item of removed) sendVtsEvent("ItemEvent", itemEventData(item, "Removed"));
   return removed.map(vtsSceneItem);
+}
+
+async function controlVtsItemAnimation(input: VtsItemAnimationControlInput): Promise<VtsItemAnimationControlResult> {
+  const item = storedActiveScene().items.find((candidate) => candidate.id === input.itemInstanceID);
+  if (!item) return { error: "not-found" };
+  const hasAnimationControl = input.framerate !== undefined || input.frame !== undefined || input.setAutoStopFrames || input.setAnimationPlayState;
+  if (item.type !== "GIF" && hasAnimationControl) return { error: "simple-image" };
+  const runtime = itemAnimationRuntime.get(item.id);
+  const frameCount = runtime?.frameCount ?? (item.type === "GIF" ? 1 : -1);
+  if (input.autoStopFrames.length > 1024) return { error: "too-many-auto-stop-frames" };
+  if (input.frame !== undefined && (input.frame < 0 || input.frame >= frameCount)) return { error: "invalid-frame" };
+  if (input.setAutoStopFrames && input.autoStopFrames.some((frame) => frame < 0 || frame >= frameCount)) return { error: "invalid-frame" };
+  if (input.brightness !== undefined) item.brightness = Math.max(0, Math.min(1, input.brightness));
+  if (input.opacity !== undefined) item.opacity = Math.max(0, Math.min(1, input.opacity));
+  if (item.type === "GIF") {
+    if (input.framerate !== undefined) item.animationFramerate = Math.max(0.1, Math.min(120, input.framerate));
+    if (input.frame !== undefined) item.animationFrame = input.frame;
+    if (input.setAutoStopFrames) item.animationAutoStopFrames = [...new Set(input.autoStopFrames)];
+    if (input.setAnimationPlayState) item.animationPlaying = input.animationPlayState;
+    item.animationRevision += 1;
+    itemAnimationRuntime.set(item.id, {
+      frameCount, currentFrame: input.frame ?? runtime?.currentFrame ?? item.animationFrame,
+      framerate: item.animationFramerate,
+      animationPlaying: input.setAnimationPlayState ? input.animationPlayState : runtime?.animationPlaying ?? item.animationPlaying
+    });
+  }
+  await saveScenes();
+  broadcastSceneWorkspace();
+  sendVtsEvent("ItemEvent", itemEventData(item, "Changed"));
+  const current = itemAnimationRuntime.get(item.id);
+  return { frame: item.type === "GIF" ? current?.currentFrame ?? item.animationFrame : -1, animationPlaying: item.type === "GIF" ? current?.animationPlaying ?? item.animationPlaying : false };
 }
 
 async function moveVtsItems(inputs: VtsItemMoveInput[]): Promise<Array<{ itemInstanceID: string; success: boolean; errorID: number }>> {
@@ -645,6 +708,7 @@ async function cleanupDisconnectedPluginItems(apiSession: VtsApiSession): Promis
   if (!removed.length) return;
   const ids = new Set(removed.map((item) => item.id));
   scene.items = scene.items.filter((item) => !ids.has(item.id));
+  for (const id of ids) itemAnimationRuntime.delete(id);
   await saveScenes();
   broadcastSceneWorkspace();
   for (const item of removed) sendVtsEvent("ItemEvent", itemEventData(item, "Removed"));
@@ -1378,6 +1442,7 @@ function startVtsApiServer(): void {
     listItems: listVtsItems,
     loadItem: loadVtsItem,
     unloadItems: unloadVtsItems,
+    controlItemAnimation: controlVtsItemAnimation,
     moveItems: moveVtsItems,
     pinItem: pinVtsItem,
     postProcessingState: () => postProcessingState,
@@ -1701,9 +1766,11 @@ app.whenReady().then(async () => {
     const item: StoredSceneItem = {
       id: randomUUID(), fileName: basename(sourcePath), filePath: canonicalSourcePath, type,
       positionX: 0, positionY: 0, size: 0.32, rotation: 0, order, flipped: false, locked: false,
-      censored: false, smoothing: 0, opacity: 1, unloadWhenPluginDisconnects: false
+      censored: false, smoothing: 0, opacity: 1, brightness: 1, animationFramerate: 30, animationFrame: 0,
+      animationPlaying: true, animationAutoStopFrames: [], animationRevision: 0, unloadWhenPluginDisconnects: false
     };
     scene.items.push(item);
+    await prepareGifAnimation(item);
     itemFiles.set(item.fileName, { fileName: item.fileName, filePath: item.filePath, type: item.type });
     await Promise.all([saveScenes(), saveItemFiles()]);
     if (scene.id === sceneLibrary.activeSceneId) sendVtsEvent("ItemEvent", itemEventData(item, "Added"));
@@ -1714,7 +1781,19 @@ app.whenReady().then(async () => {
     const item = requireSceneItem(scene, requestedItemId);
     if (!requestedUpdate || typeof requestedUpdate !== "object" || Array.isArray(requestedUpdate)) throw new Error("Invalid item update");
     const wasLocked = item.locked;
-    Object.assign(item, normalizeSceneItemTransform(requestedUpdate as SceneItemUpdate, item));
+    const update = requestedUpdate as SceneItemUpdate;
+    Object.assign(item, normalizeSceneItemTransform(update, item));
+    if (typeof update.brightness === "number" && Number.isFinite(update.brightness)) item.brightness = Math.max(0, Math.min(1, update.brightness));
+    if (item.type === "GIF") {
+      const runtime = itemAnimationRuntime.get(item.id);
+      if (typeof update.animationFramerate === "number" && Number.isFinite(update.animationFramerate)) item.animationFramerate = Math.max(0.1, Math.min(120, update.animationFramerate));
+      if (typeof update.animationFrame === "number" && Number.isInteger(update.animationFrame) && update.animationFrame >= 0 && update.animationFrame < (runtime?.frameCount ?? 1)) item.animationFrame = update.animationFrame;
+      if (typeof update.animationPlaying === "boolean") item.animationPlaying = update.animationPlaying;
+      if (update.animationFramerate !== undefined || update.animationFrame !== undefined || update.animationPlaying !== undefined) {
+        item.animationRevision += 1;
+        itemAnimationRuntime.set(item.id, { frameCount: runtime?.frameCount ?? 1, currentFrame: item.animationFrame, framerate: item.animationFramerate, animationPlaying: item.animationPlaying });
+      }
+    }
     await saveScenes();
     if (scene.id === sceneLibrary.activeSceneId && item.locked !== wasLocked) sendVtsEvent("ItemEvent", itemEventData(item, item.locked ? "Locked" : "Unlocked"));
     return sceneWorkspace();
@@ -1733,6 +1812,7 @@ app.whenReady().then(async () => {
     const scene = requireScene(requestedSceneId);
     const item = requireSceneItem(scene, requestedItemId);
     scene.items = scene.items.filter((candidate) => candidate.id !== item.id);
+    itemAnimationRuntime.delete(item.id);
     await saveScenes();
     if (scene.id === sceneLibrary.activeSceneId) sendVtsEvent("ItemEvent", itemEventData(item, "Removed"));
     return sceneWorkspace();
@@ -1824,8 +1904,18 @@ app.whenReady().then(async () => {
     publishPhysicsControl();
     return true;
   });
+  ipcMain.handle("report-item-animation-state", (_event, itemID: unknown, rawState: unknown) => {
+    if (typeof itemID !== "string" || !rawState || typeof rawState !== "object" || Array.isArray(rawState)) return false;
+    const item = storedActiveScene().items.find((candidate) => candidate.id === itemID);
+    if (!item || item.type !== "GIF") return false;
+    const state = rawState as Record<string, unknown>;
+    if (!Number.isInteger(state.frameCount) || (state.frameCount as number) < 1 || (state.frameCount as number) > 1024 || !Number.isInteger(state.currentFrame) || (state.currentFrame as number) < 0 || (state.currentFrame as number) >= (state.frameCount as number) || typeof state.framerate !== "number" || !Number.isFinite(state.framerate) || state.framerate < 0.1 || state.framerate > 120 || typeof state.animationPlaying !== "boolean") return false;
+    itemAnimationRuntime.set(itemID, { frameCount: state.frameCount as number, currentFrame: state.currentFrame as number, framerate: state.framerate, animationPlaying: state.animationPlaying });
+    return true;
+  });
   await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadModelMappingOverrides(), loadModelDirectories(), loadScenes(), loadPostProcessing()]);
   await Promise.all([backfillItemFilesFromScenes(), backfillModelDirectoriesFromScenes()]);
+  await prepareAllGifAnimations();
   await loadActiveSceneModel();
   startTrackingServer();
   startVtsApiServer();

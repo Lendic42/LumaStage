@@ -46,7 +46,8 @@ const neutralParameters: ParameterValues = {
   ParamMouthOpenY: 0,
   ParamMouthForm: 0,
   ParamBrowLY: 0,
-  ParamBrowRY: 0
+  ParamBrowRY: 0,
+  ParamBreath: 0.5
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -68,18 +69,18 @@ export function mapARKitToStandardParameters(frame: TrackingFrame, neutral?: Hea
   const browRight = coefficient(frame, "browInnerUp") + coefficient(frame, "browOuterUpRight") - coefficient(frame, "browDownRight");
 
   return {
-    ParamAngleX: clamp(yaw / 0.65 * 30, -30, 30),
-    ParamAngleY: clamp(-pitch / 0.55 * 30, -30, 30),
-    ParamAngleZ: clamp(-roll / 0.55 * 30, -30, 30),
-    ParamBodyAngleX: clamp(yaw / 0.65 * 10, -10, 10),
-    ParamBodyAngleY: clamp(-pitch / 0.55 * 10, -10, 10),
-    ParamBodyAngleZ: clamp(-roll / 0.55 * 10, -10, 10),
+    ParamAngleX: clamp(yaw / 0.5 * 30, -30, 30),
+    ParamAngleY: clamp(-pitch / 0.42 * 30, -30, 30),
+    ParamAngleZ: clamp(-roll / 0.45 * 30, -30, 30),
+    ParamBodyAngleX: clamp(yaw / 0.5 * 12, -12, 12),
+    ParamBodyAngleY: clamp(-pitch / 0.42 * 12, -12, 12),
+    ParamBodyAngleZ: clamp(-roll / 0.45 * 12, -12, 12),
     ParamEyeLOpen: clamp(1 - coefficient(frame, "eyeBlinkLeft") + coefficient(frame, "eyeWideLeft") * 0.35, 0, 1.35),
     ParamEyeROpen: clamp(1 - coefficient(frame, "eyeBlinkRight") + coefficient(frame, "eyeWideRight") * 0.35, 0, 1.35),
-    ParamEyeBallX: clamp(frame.gaze.x, -1, 1),
-    ParamEyeBallY: clamp(-frame.gaze.y, -1, 1),
-    ParamMouthOpenY: clamp(Math.max(coefficient(frame, "jawOpen"), coefficient(frame, "mouthFunnel") * 0.8), 0, 1),
-    ParamMouthForm: clamp(smile - frown, -1, 1),
+    ParamEyeBallX: clamp(frame.gaze.x * 1.15, -1, 1),
+    ParamEyeBallY: clamp(-frame.gaze.y * 1.15, -1, 1),
+    ParamMouthOpenY: clamp(Math.max(coefficient(frame, "jawOpen"), coefficient(frame, "mouthFunnel") * 0.8) * 1.15, 0, 1),
+    ParamMouthForm: clamp((smile - frown) * 1.25, -1, 1),
     ParamBrowLY: clamp(browLeft, -1, 1),
     ParamBrowRY: clamp(browRight, -1, 1)
   };
@@ -165,7 +166,7 @@ export class TrackingEngine {
   private vTubeOverrides = new Map<string, { value: number; weight: number; mode: "set" | "add"; expiresAt: number }>();
 
   constructor(options: TrackingEngineOptions = {}) {
-    this.smoothingMs = options.smoothingMs ?? 55;
+    this.smoothingMs = options.smoothingMs ?? 28;
     this.lostTrackingSmoothingMs = options.lostTrackingSmoothingMs ?? 220;
     this.staleAfterMs = options.staleAfterMs ?? 500;
   }
@@ -216,11 +217,12 @@ export class TrackingEngine {
     const isFresh = faceIsFresh || hasOverrides;
     if (isFresh) this.target = this.mapFrame(this.lastFrame ?? emptyTrackingFrame, now);
     else this.target = this.neutralTarget();
+    this.target = this.withAmbientMotion(this.target, now, faceIsFresh);
     const delta = clamp(now - this.lastTickAt, 0, 100);
     this.lastTickAt = now;
     for (const [id, target] of Object.entries(this.target)) {
       const configuredSmoothing = this.parameterSmoothing.get(id) ?? 0;
-      const tau = isFresh ? (configuredSmoothing > 0 ? Math.max(15, configuredSmoothing * 10) : this.smoothingMs) : this.lostTrackingSmoothingMs;
+      const tau = isFresh ? (configuredSmoothing > 0 ? Math.max(12, configuredSmoothing) : this.smoothingMs) : this.lostTrackingSmoothingMs;
       const alpha = tau <= 0 ? 1 : 1 - Math.exp(-delta / tau);
       this.current[id] = (this.current[id] ?? target) + (target - (this.current[id] ?? target)) * alpha;
     }
@@ -269,6 +271,21 @@ export class TrackingEngine {
       if (value !== undefined) values[mapping.outputLive2D] = value;
     }
     return values;
+  }
+
+  private withAmbientMotion(values: ParameterValues, now: number, faceTracked: boolean): ParameterValues {
+    const breathPhase = now / 3600 * Math.PI * 2;
+    const swayPhase = now / 6200 * Math.PI * 2;
+    const breath = (Math.sin(breathPhase) + 1) / 2;
+    const strength = faceTracked ? 1 : 1.35;
+    return {
+      ...values,
+      ParamBreath: breath,
+      ParamBodyAngleX: (values.ParamBodyAngleX ?? 0) + Math.sin(swayPhase) * 1.4 * strength,
+      ParamBodyAngleY: (values.ParamBodyAngleY ?? 0) + (breath - 0.5) * 1.8 * strength,
+      ParamBodyAngleZ: (values.ParamBodyAngleZ ?? 0) + Math.sin(swayPhase * 0.73 + 1.2) * 0.8 * strength,
+      ParamAngleZ: (values.ParamAngleZ ?? 0) + Math.sin(swayPhase * 0.61) * 0.45 * strength
+    };
   }
 }
 

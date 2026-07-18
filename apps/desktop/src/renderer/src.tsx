@@ -54,6 +54,67 @@ function AvatarPreview({ frame }: { frame: TrackingFrame }) {
   );
 }
 
+function SceneItemVisual({ item, selected, overlayMode, onPointerDown, setElement }: {
+  item: SceneItem;
+  selected: boolean;
+  overlayMode: boolean;
+  onPointerDown(event: React.PointerEvent<HTMLElement>): void;
+  setElement(element: HTMLElement | null): void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [gifFallback, setGifFallback] = useState(false);
+  useEffect(() => {
+    if (item.type !== "GIF" || gifFallback || !canvasRef.current) return;
+    let disposed = false;
+    let timeout = 0;
+    let decoder: { tracks: { ready: Promise<void>; selectedTrack?: { frameCount: number } }; decode(options: { frameIndex: number; completeFramesOnly: boolean }): Promise<{ image: CanvasImageSource & { displayWidth: number; displayHeight: number; close(): void } }>; close(): void } | undefined;
+    const run = async () => {
+      const Constructor = (window as unknown as { ImageDecoder?: new (options: { data: ArrayBuffer; type: string }) => typeof decoder }).ImageDecoder;
+      if (!Constructor) throw new Error("ImageDecoder is unavailable");
+      const data = await fetch(`${item.imageUrl}?animated=${item.id}`).then((response) => {
+        if (!response.ok) throw new Error(`GIF request failed with ${response.status}`);
+        return response.arrayBuffer();
+      });
+      const created = new Constructor({ data, type: "image/gif" });
+      if (!created) throw new Error("ImageDecoder could not be created");
+      decoder = created;
+      await created.tracks.ready;
+      const frameCount = created.tracks.selectedTrack?.frameCount ?? 0;
+      if (frameCount < 1 || frameCount > 1024) throw new Error("GIF frame count is invalid");
+      let currentFrame = Math.min(item.animationFrame, frameCount - 1);
+      let playing = item.animationPlaying;
+      const framerate = Math.max(0.1, Math.min(120, item.animationFramerate));
+      const report = () => void window.lumastage.reportItemAnimationState(item.id, { frameCount, currentFrame, framerate, animationPlaying: playing });
+      const draw = async () => {
+        if (disposed || !decoder || !canvasRef.current) return;
+        const { image } = await decoder.decode({ frameIndex: currentFrame, completeFramesOnly: true });
+        if (disposed || !canvasRef.current) { image.close(); return; }
+        const canvas = canvasRef.current;
+        canvas.width = image.displayWidth;
+        canvas.height = image.displayHeight;
+        canvas.getContext("2d")?.drawImage(image, 0, 0);
+        image.close();
+        if (playing && item.animationAutoStopFrames.includes(currentFrame)) playing = false;
+        report();
+        if (playing) timeout = window.setTimeout(() => { currentFrame = (currentFrame + 1) % frameCount; void draw(); }, 1000 / framerate);
+      };
+      await draw();
+    };
+    void run().catch(() => { if (!disposed) setGifFallback(true); });
+    return () => { disposed = true; window.clearTimeout(timeout); decoder?.close(); };
+  }, [item.id, item.imageUrl, item.type, item.animationRevision, gifFallback]);
+  const className = `scene-item${selected && !overlayMode ? " selected" : ""}${item.locked ? " locked" : ""}${item.pin ? " pinned" : ""}`;
+  const style: React.CSSProperties = {
+    left: `${(item.positionX + 1) * 50}%`, top: `${(1 - item.positionY) * 50}%`, width: `${item.size * 100}%`, opacity: item.opacity,
+    zIndex: item.order < 0 ? item.order + 31 : 1000 + item.order,
+    transform: `translate(-50%, -50%) rotate(${item.rotation}deg) scaleX(${item.flipped ? -1 : 1})`, pointerEvents: overlayMode ? "none" : "auto",
+    filter: `brightness(${item.brightness}) drop-shadow(0 ${selected ? 0 : 12}px ${selected ? 12 : 22}px ${selected ? "#816aff88" : "#0005"})`
+  };
+  return item.type === "GIF" && !gifFallback
+    ? <canvas ref={(element) => { canvasRef.current = element; setElement(element); }} className={className} aria-label={item.fileName} onPointerDown={onPointerDown} style={style} />
+    : <img ref={setElement} className={className} src={`${item.imageUrl}?item=${item.id}`} alt={item.fileName} draggable={false} onPointerDown={onPointerDown} style={style} />;
+}
+
 function Meter({ label, value }: { label: string; value: number }) {
   const normalized = Math.max(0, Math.min(1, value));
   return <div className="meter"><span>{label}</span><div><i style={{ width: `${normalized * 100}%` }} /></div><b>{normalized.toFixed(2)}</b></div>;
@@ -236,7 +297,7 @@ function App() {
   const [modelMove, setModelMove] = useState<{ nonce: number; value: VtsModelMoveAnimation } | null>(null);
   const [sceneLibrary, setSceneLibrary] = useState<SceneLibrary | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const itemElements = useRef(new Map<string, HTMLImageElement>());
+  const itemElements = useRef(new Map<string, HTMLElement>());
   const [mappingEditorOpen, setMappingEditorOpen] = useState(false);
   const [activeView, setActiveView] = useState<AppView>("stage");
   const [modelLibrary, setModelLibrary] = useState<ModelLibrary>({ models: [] });
@@ -299,7 +360,7 @@ function App() {
     try { applyWorkspace(await window.lumastage.updateSceneItem(activeScene.id, selectedItem.id, update)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
-  const startItemDrag = (event: React.PointerEvent<HTMLImageElement>, item: SceneItem) => {
+  const startItemDrag = (event: React.PointerEvent<HTMLElement>, item: SceneItem) => {
     if (!activeScene || overlayMode) return;
     setSelectedItemId(item.id);
     if (item.locked || item.pin) return;
@@ -414,16 +475,7 @@ function App() {
           <div className="stage" style={stageStyle}>
             <div className="grid" />
             <div className="vfx-scene" style={postProcessingStyle}>
-            {activeScene?.items.map((item) => <img
-              key={item.id}
-              ref={(element) => { if (element) itemElements.current.set(item.id, element); else itemElements.current.delete(item.id); }}
-              className={`scene-item${selectedItemId === item.id && !overlayMode ? " selected" : ""}${item.locked ? " locked" : ""}${item.pin ? " pinned" : ""}`}
-              src={`${item.imageUrl}?item=${item.id}`}
-              alt={item.fileName}
-              draggable={false}
-              onPointerDown={(event) => startItemDrag(event, item)}
-              style={{ left: `${(item.positionX + 1) * 50}%`, top: `${(1 - item.positionY) * 50}%`, width: `${item.size * 100}%`, opacity: item.opacity, zIndex: item.order > 0 ? 4 : 1, transform: `translate(-50%, -50%) rotate(${item.rotation}deg) scaleX(${item.flipped ? -1 : 1})`, pointerEvents: overlayMode ? "none" : "auto" }}
-            />)}
+            {activeScene?.items.map((item) => <SceneItemVisual key={item.id} item={item} selected={selectedItemId === item.id} overlayMode={overlayMode} onPointerDown={(event) => startItemDrag(event, item)} setElement={(element) => { if (element) itemElements.current.set(item.id, element); else itemElements.current.delete(item.id); }} />)}
             {!rendererReady && <AvatarPreview frame={frame} />}
             <Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} parameterInjection={parameterInjection} expressionRequest={expressionRequest} artMeshTint={artMeshTint} physicsControl={physicsControl} modelMove={modelMove} sceneTransform={activeScene?.transform ?? neutralSceneTransform} pinnedItems={activeScene?.items.filter((item) => item.pin) ?? []} onPinnedItemLayout={applyPinnedItemLayout} onReady={setRendererReady} onError={setRendererError} />
             </div>
@@ -445,10 +497,12 @@ function App() {
                 <div className="transform-grid">
                   <label>Size <b>{selectedItem.size.toFixed(2)}</b><input type="range" min="0.01" max="1" step="0.01" value={selectedItem.size} onChange={(event) => void updateSelectedItem({ size: Number(event.target.value) })} /></label>
                   <label>Opacity <b>{Math.round(selectedItem.opacity * 100)}%</b><input type="range" min="0" max="1" step="0.01" value={selectedItem.opacity} onChange={(event) => void updateSelectedItem({ opacity: Number(event.target.value) })} /></label>
+                  <label>Brightness <b>{Math.round(selectedItem.brightness * 100)}%</b><input type="range" min="0" max="1" step="0.01" value={selectedItem.brightness} onChange={(event) => void updateSelectedItem({ brightness: Number(event.target.value) })} /></label>
                   <label>X <b>{selectedItem.pin ? "ArtMesh" : selectedItem.positionX.toFixed(2)}</b><input disabled={Boolean(selectedItem.pin)} type="range" min="-1.5" max="1.5" step="0.01" value={selectedItem.positionX} onChange={(event) => void updateSelectedItem({ positionX: Number(event.target.value) })} /></label>
                   <label>Y <b>{selectedItem.pin ? "ArtMesh" : selectedItem.positionY.toFixed(2)}</b><input disabled={Boolean(selectedItem.pin)} type="range" min="-1.5" max="1.5" step="0.01" value={selectedItem.positionY} onChange={(event) => void updateSelectedItem({ positionY: Number(event.target.value) })} /></label>
                   <label>Rotate <b>{selectedItem.pin ? selectedItem.pin.angleRelativeTo.replace("RelativeTo", "") : `${Math.round(selectedItem.rotation)}°`}</b><input disabled={Boolean(selectedItem.pin)} type="range" min="-180" max="180" step="1" value={selectedItem.rotation} onChange={(event) => void updateSelectedItem({ rotation: Number(event.target.value) })} /></label>
                 </div>
+                {selectedItem.type === "GIF" && <div className="gif-controls"><div><span>GIF animation</span><b>{selectedItem.animationFrameCount} frames · {selectedItem.animationFramerate.toFixed(1)} FPS</b></div><label>FPS<input type="range" min="0.1" max="120" step="0.1" value={selectedItem.animationFramerate} onChange={(event) => void updateSelectedItem({ animationFramerate: Number(event.target.value) })} /></label><label>Frame<input type="range" min="0" max={Math.max(0, selectedItem.animationFrameCount - 1)} step="1" value={Math.min(selectedItem.animationFrame, Math.max(0, selectedItem.animationFrameCount - 1))} onChange={(event) => void updateSelectedItem({ animationFrame: Number(event.target.value), animationPlaying: false })} /></label><button className={selectedItem.animationPlaying ? "active" : ""} onClick={() => void updateSelectedItem({ animationPlaying: !selectedItem.animationPlaying })}>{selectedItem.animationPlaying ? "Ⅱ Pause" : "▶ Play"}</button></div>}
                 <div className="scene-actions">
                   <button className={selectedItem.flipped ? "active" : ""} onClick={() => void updateSelectedItem({ flipped: !selectedItem.flipped })}>⇋ Flip</button>
                   <button className={selectedItem.locked ? "active" : ""} onClick={() => void updateSelectedItem({ locked: !selectedItem.locked })}>{selectedItem.locked ? "🔒 Locked" : "Lock"}</button>

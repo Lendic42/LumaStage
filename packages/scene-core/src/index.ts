@@ -47,6 +47,12 @@ export const sceneItemSchema = z.object({
   censored: z.boolean(),
   smoothing: z.number().finite().min(0).max(1),
   opacity: z.number().finite().min(0).max(1).default(1),
+  brightness: z.number().finite().min(0).max(1).default(1),
+  animationFramerate: z.number().finite().min(0.1).max(120).default(30),
+  animationFrame: z.number().int().nonnegative().default(0),
+  animationPlaying: z.boolean().default(true),
+  animationAutoStopFrames: z.array(z.number().int().nonnegative()).max(1024).default([]),
+  animationRevision: z.number().int().nonnegative().default(0),
   pin: sceneItemPinSchema.optional(),
   unloadWhenPluginDisconnects: z.boolean().default(false),
   ownerKey: z.string().max(128).optional(),
@@ -127,4 +133,58 @@ export function normalizeSceneTransform(input: Partial<SceneTransform>, current:
     rotation: clamp(input.rotation, current.rotation, -180, 180),
     mirror: typeof input.mirror === "boolean" ? input.mirror : current.mirror
   };
+}
+
+export interface GifAnimationMetadata {
+  frameCount: number;
+  framerate: number;
+}
+
+/** Reads the GIF container only; compressed image pixels are never decoded here. */
+export function inspectGifAnimation(bytes: Uint8Array): GifAnimationMetadata | undefined {
+  if (bytes.length < 14) return undefined;
+  const signature = String.fromCharCode(...bytes.subarray(0, 6));
+  if (signature !== "GIF87a" && signature !== "GIF89a") return undefined;
+  let offset = 13;
+  const logicalPacked = bytes[10];
+  if (logicalPacked & 0x80) offset += 3 * 2 ** ((logicalPacked & 0x07) + 1);
+  let pendingDelay = 0;
+  const delays: number[] = [];
+  let frameCount = 0;
+  const skipSubBlocks = (): boolean => {
+    while (offset < bytes.length) {
+      const size = bytes[offset++];
+      if (size === 0) return true;
+      if (offset + size > bytes.length) return false;
+      offset += size;
+    }
+    return false;
+  };
+  while (offset < bytes.length) {
+    const marker = bytes[offset++];
+    if (marker === 0x3b) break;
+    if (marker === 0x21) {
+      if (offset >= bytes.length) return undefined;
+      const label = bytes[offset++];
+      if (offset >= bytes.length) return undefined;
+      const firstSize = bytes[offset];
+      if (label === 0xf9 && firstSize >= 4 && offset + firstSize < bytes.length) pendingDelay = bytes[offset + 2] | bytes[offset + 3] << 8;
+      if (!skipSubBlocks()) return undefined;
+      continue;
+    }
+    if (marker !== 0x2c || offset + 9 > bytes.length) return undefined;
+    const imagePacked = bytes[offset + 8];
+    offset += 9;
+    if (imagePacked & 0x80) offset += 3 * 2 ** ((imagePacked & 0x07) + 1);
+    if (offset >= bytes.length) return undefined;
+    offset += 1;
+    if (!skipSubBlocks()) return undefined;
+    frameCount += 1;
+    delays.push(pendingDelay > 0 ? pendingDelay : 10);
+    pendingDelay = 0;
+    if (frameCount > 1024) return undefined;
+  }
+  if (frameCount === 0) return undefined;
+  const averageDelay = delays.reduce((sum, delay) => sum + delay, 0) / delays.length;
+  return { frameCount, framerate: Math.max(0.1, Math.min(120, 100 / averageDelay)) };
 }

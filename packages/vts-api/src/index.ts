@@ -130,6 +130,22 @@ export interface VtsItemMoveInput {
   flip: boolean;
 }
 
+export interface VtsItemAnimationControlInput {
+  itemInstanceID: string;
+  framerate?: number;
+  frame?: number;
+  brightness?: number;
+  opacity?: number;
+  setAutoStopFrames: boolean;
+  autoStopFrames: number[];
+  setAnimationPlayState: boolean;
+  animationPlayState: boolean;
+}
+
+export type VtsItemAnimationControlResult =
+  | { frame: number; animationPlaying: boolean }
+  | { error: "not-found" | "invalid-frame" | "too-many-auto-stop-frames" | "simple-image" | "unsupported-type" };
+
 export type VtsItemPinAngleMode = "RelativeToWorld" | "RelativeToCurrentItemRotation" | "RelativeToModel" | "RelativeToPinPosition";
 export type VtsItemPinSizeMode = "RelativeToWorld" | "RelativeToCurrentItemSize";
 export type VtsItemVertexPinType = "Provided" | "Center" | "Random";
@@ -266,6 +282,7 @@ export interface VtsApiHost {
   listItems(): { items: VtsSceneItem[]; availableItemFiles: Array<{ fileName: string; type: VtsSceneItem["type"]; loadedCount: number }>; availableSpots: number[] };
   loadItem(pluginName: string, pluginDeveloper: string, sessionID: string, input: VtsItemLoadInput): Promise<{ item?: VtsSceneItem; error?: "not-found" | "limit" | "order" }>;
   unloadItems(pluginName: string, pluginDeveloper: string, input: { unloadAllInScene: boolean; unloadAllLoadedByThisPlugin: boolean; allowOthers: boolean; instanceIDs: string[]; fileNames: string[] }): Promise<VtsSceneItem[]>;
+  controlItemAnimation(input: VtsItemAnimationControlInput): Promise<VtsItemAnimationControlResult>;
   moveItems(inputs: VtsItemMoveInput[]): Promise<Array<{ itemInstanceID: string; success: boolean; errorID: number }>>;
   pinItem(input: VtsItemPinInput): Promise<{ item?: VtsSceneItem; error?: "item-not-found" | "invalid-mode" | "model-not-found" | "artmesh-not-found" | "invalid-position" }>;
   postProcessingState(): VtsPostProcessingState;
@@ -812,6 +829,35 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
       instanceIDs, fileNames
     });
     return response("ItemUnloadResponse", requestID, { unloadedItems: unloaded.map((item) => ({ instanceID: item.instanceID, fileName: item.fileName })) });
+  }
+
+  if (request.messageType === "ItemAnimationControlRequest") {
+    const itemInstanceID = stringField(data, "itemInstanceID");
+    if (!itemInstanceID) return error(requestID, 850, "Item instance ID was not found");
+    const optionalControlNumber = (key: string): number | undefined | null => {
+      const value = data[key] === undefined ? -1 : data[key];
+      if (typeof value !== "number" || !Number.isFinite(value)) return null;
+      return value === -1 ? undefined : value;
+    };
+    const framerate = optionalControlNumber("framerate"), frame = optionalControlNumber("frame");
+    const brightness = optionalControlNumber("brightness"), opacity = optionalControlNumber("opacity");
+    if (framerate === null || frame === null || brightness === null || opacity === null || (frame !== undefined && !Number.isInteger(frame))) return error(requestID, 852, "Item animation values are invalid");
+    const autoStopFrames = data.autoStopFrames === undefined ? [] : data.autoStopFrames;
+    if (!Array.isArray(autoStopFrames) || autoStopFrames.some((value) => !Number.isInteger(value))) return error(requestID, 852, "Auto-stop frame indices are invalid");
+    if (autoStopFrames.length > 1024) return error(requestID, 853, "Too many auto-stop frames were provided");
+    const controlled = await host.controlItemAnimation({
+      itemInstanceID, framerate, frame, brightness, opacity,
+      setAutoStopFrames: data.setAutoStopFrames === true, autoStopFrames: autoStopFrames as number[],
+      setAnimationPlayState: data.setAnimationPlayState === true, animationPlayState: data.animationPlayState === true
+    });
+    if ("error" in controlled) {
+      if (controlled.error === "not-found") return error(requestID, 850, "Item instance ID was not found");
+      if (controlled.error === "unsupported-type") return error(requestID, 851, "This item type does not support animation control");
+      if (controlled.error === "too-many-auto-stop-frames") return error(requestID, 853, "Too many auto-stop frames were provided");
+      if (controlled.error === "simple-image") return error(requestID, 854, "Simple images do not support animation controls");
+      return error(requestID, 852, "Frame or auto-stop frame index is invalid");
+    }
+    return response("ItemAnimationControlResponse", requestID, controlled);
   }
 
   if (request.messageType === "ItemMoveRequest") {

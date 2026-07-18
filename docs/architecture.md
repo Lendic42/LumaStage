@@ -24,6 +24,8 @@ Scene documents are validated by the isolated `packages/scene-core` package and 
 
 Visual scene items use the same boundary: absolute item paths remain in main-process persistence while the renderer receives a fixed `lumastage-item://active/<instance-id>` URL. A separate item-file catalog survives unloading scene instances. Local UI and VTube Studio API operations mutate the same validated item state and main broadcasts workspace changes to every renderer window.
 
+GIF items are decoded frame-by-frame with Chromium's native `ImageDecoder` into isolated canvases. Main parses only the bounded GIF container metadata, tracks the live frame without writing every tick, and persists explicit API controls. Negative order slots render behind the Live2D canvas and positive slots in front; brightness, opacity, FPS, seek, play/pause and auto-stop therefore affect the actual scene rather than metadata only.
+
 Pinned items store a validated model ID, ArtMesh ID, one real drawable triangle and barycentric weights. The Cubism renderer reports vertex counts and triangle indices once, then resolves the three deformed vertices every frame and imperatively positions the DOM item in canvas coordinates. Center/Random requests are normalized to concrete triangles before persistence; a Provided request is rejected unless its three IDs are an actual triangle and its weights add to one.
 
 User-tuned tracking mappings are stored separately from model assets. The main process validates bounded finite mapping records, keys each override by the SHA-256 digest of the resolved model directory and serializes updates through a write queue. The renderer receives only the active mapping list; resetting removes the override and reuses the original parsed `*.vtube.json` mappings without modifying the model folder.
@@ -74,3 +76,5 @@ Desktop processing is deterministic and ordered:
 6. Apply idle/lost-tracking decay and send values to the renderer.
 
 Gaze values are normalized to `[-1, 1]`; ARKit blend-shape coefficients are constrained to `[0, 1]`. Sequence monotonicity is session state and is enforced by the receiver rather than by the per-message schema.
+
+The response profile intentionally favors performance over a damped presentation: imported smoothing values are treated as milliseconds, default smoothing is 28 ms, head/gaze/mouth ranges are moderately amplified, and a slow `ParamBreath`/body-sway layer keeps the avatar moving continuously without replacing live face inputs.

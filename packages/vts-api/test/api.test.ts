@@ -54,6 +54,11 @@ function host(): VtsApiHost {
     }),
     loadItem: async (_name, _developer, _sessionID, input) => input.fileName === "hat.png" ? { item: { fileName: "hat.png", instanceID: "item-2", order: input.order, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: "Main", fromWorkshop: false } } : { error: "not-found" },
     unloadItems: async () => [{ fileName: "hat.png", instanceID: "item-1", order: 1, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: false, pinnedModelID: "", pinnedArtMeshID: "", groupName: "", sceneName: "Main", fromWorkshop: false }],
+    controlItemAnimation: async (input) => input.itemInstanceID === "missing"
+      ? { error: "not-found" }
+      : input.itemInstanceID === "still-image" && (input.frame !== undefined || input.framerate !== undefined || input.setAnimationPlayState || input.setAutoStopFrames)
+        ? { error: "simple-image" }
+        : { frame: input.frame ?? 2, animationPlaying: input.setAnimationPlayState ? input.animationPlayState : true },
     moveItems: async (inputs) => inputs.map((input) => ({ itemInstanceID: input.itemInstanceID, success: true, errorID: -1 })),
     pinItem: async (input) => input.itemInstanceID === "missing" ? { error: "item-not-found" } : {
       item: { fileName: "hat.png", instanceID: input.itemInstanceID, order: 1, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: input.pin, pinnedModelID: input.pin ? "haru" : "", pinnedArtMeshID: input.pin ? "HairFront" : "", groupName: "", sceneName: "Main", fromWorkshop: false }
@@ -268,6 +273,28 @@ describe("VTube Studio API compatibility core", () => {
     expect((moved.data as { movedItems: Array<{ success: boolean }> }).movedItems[0].success).toBe(true);
     const unloaded = await handleVtsApiRequest(request("ItemUnloadRequest", { instanceIDs: ["item-1"], fileNames: [], allowUnloadingItemsLoadedByUserOrOtherPlugins: true }), session, host());
     expect((unloaded.data as { unloadedItems: unknown[] }).unloadedItems).toHaveLength(1);
+  });
+
+  it("controls animated item frames while allowing visual controls on still images", async () => {
+    const session: VtsApiSession = { authenticated: true };
+    const animated = await handleVtsApiRequest(request("ItemAnimationControlRequest", {
+      itemInstanceID: "animated-gif", framerate: 12, frame: 3, brightness: 0.6, opacity: 0.75,
+      setAutoStopFrames: true, autoStopFrames: [0, 4], setAnimationPlayState: true, animationPlayState: false
+    }), session, host());
+    expect(animated.messageType).toBe("ItemAnimationControlResponse");
+    expect(animated.data).toMatchObject({ frame: 3, animationPlaying: false });
+    const stillVisual = await handleVtsApiRequest(request("ItemAnimationControlRequest", {
+      itemInstanceID: "still-image", brightness: 0.4, opacity: 0.5
+    }), session, host());
+    expect(stillVisual.messageType).toBe("ItemAnimationControlResponse");
+    const stillAnimation = await handleVtsApiRequest(request("ItemAnimationControlRequest", {
+      itemInstanceID: "still-image", frame: 1
+    }), session, host());
+    expect((stillAnimation.data as { errorID: number }).errorID).toBe(854);
+    const tooMany = await handleVtsApiRequest(request("ItemAnimationControlRequest", {
+      itemInstanceID: "animated-gif", setAutoStopFrames: true, autoStopFrames: Array.from({ length: 1025 }, (_, index) => index)
+    }), session, host());
+    expect((tooMany.data as { errorID: number }).errorID).toBe(853);
   });
 
   it("pins and unpins items using official ArtMesh pin modes", async () => {
