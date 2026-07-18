@@ -1,7 +1,7 @@
 {
   "name": "lumastage",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Open-source VTuber studio with native iPhone TrueDepth tracking",
   "license": "GPL-3.0-only",
   "workspaces": [
