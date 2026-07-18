@@ -30,6 +30,8 @@ User-tuned tracking mappings are stored separately from model assets. The main p
 
 Imported model directories also live in a private main-process library independent of scenes. `AvailableModelsRequest` reads validated metadata from that library, while `ModelLoadRequest` attaches the selected model to the active scene (or clears it for an empty ID), broadcasts the new workspace and emits model events. Expression state remains in main and activation is forwarded to the renderer through a narrow typed IPC event.
 
+Post-processing state is owned and validated by the main process, persisted separately from scene/model assets and exposed to both the local UI and authenticated VTS plugins. The renderer receives a typed public snapshot and applies color grading, bloom, vignette, chromatic separation, blur and animated grain to a dedicated scene-composite layer; control overlays remain sharp and unaffected.
+
 The Cubism adapter reports actual drawable IDs back to main after a model is initialized. This keeps ArtMesh lists, tag matching and tint commands tied to renderer evidence instead of manifest guesses. Physics metadata comes from `*.physics3.json`; API overrides are session-owned, expire after their requested timer and are reset on disconnect. Model movement persists its final scene transform while a typed renderer event interpolates the visible transition.
 
 VTube Studio standalone animation hotkeys are resolved only within the validated model root. For renderer loading, main returns an in-memory manifest view with one synthetic motion group; the on-disk `model3.json` and `*.vtube.json` are never rewritten. Each imported hotkey carries its exact runtime group/index and validated trigger metadata, avoiding filename guessing in the renderer.

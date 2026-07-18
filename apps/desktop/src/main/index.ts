@@ -8,9 +8,9 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
 import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HOTKEY_MOTION_GROUP } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsSceneItem } from "@lumastage/vts-api";
+import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsItemPinInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsPostProcessingState, type VtsPostProcessingUpdate, type VtsPostProcessingValue, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
-import type { ArtMeshGeometry, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, ModelLibrary, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
+import type { ArtMeshGeometry, CubismCoreStatus, DesktopStatus, ImportedHotkey, ImportedModel, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, ScenePreset, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "lumastage-model", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -63,6 +63,19 @@ let customParameterSaveQueue: Promise<void> = Promise.resolve();
 interface ItemFileEntry { fileName: string; filePath: string; type: "PNG" | "JPG" | "GIF" }
 const itemFiles = new Map<string, ItemFileEntry>();
 let itemFileSaveQueue: Promise<void> = Promise.resolve();
+const postProcessingDefaults: Record<string, VtsPostProcessingValue> = {
+  ColorGrading_Strength: 0, ColorGrading_HueShift: 0, ColorGrading_Saturation: 0, ColorGrading_Brightness: 0,
+  ColorGrading_Contrast: 0, ColorGrading_Invert: 0, Bloom_Strength: 0, Vignette_Strength: 0, Vignette_Smoothness: 0.9,
+  ChromaticAberration_Strength: 0, BlurEffects_Strength: 0, BlurEffects_BasicBlurStrength: 0, Grain_Strength: 0, Grain_Size: 1.7
+};
+const postProcessingPresets: Record<string, Record<string, VtsPostProcessingValue>> = {
+  Dreamy: { ColorGrading_Strength: 1, ColorGrading_HueShift: 8, ColorGrading_Saturation: 18, ColorGrading_Brightness: 4, Bloom_Strength: 0.42, Vignette_Strength: 0.18 },
+  Noir: { ColorGrading_Strength: 1, ColorGrading_Saturation: -100, ColorGrading_Contrast: 24, Vignette_Strength: 0.48, Grain_Strength: 0.22 },
+  Retro: { ColorGrading_Strength: 1, ColorGrading_HueShift: -12, ColorGrading_Saturation: -18, ColorGrading_Contrast: 14, ChromaticAberration_Strength: 0.3, Grain_Strength: 0.38, Grain_Size: 1.2 }
+};
+let postProcessingState: VtsPostProcessingState = { active: true, activePreset: "", presets: Object.keys(postProcessingPresets), values: { ...postProcessingDefaults } };
+let postProcessingFadeTime = 0;
+let postProcessingSaveQueue: Promise<void> = Promise.resolve();
 const pluginSessions = new Map<WebSocket, VtsApiSession>();
 const pendingPluginApprovals = new Map<string, { resolve(approved: boolean): void; timeout: NodeJS.Timeout }>();
 let vtsApiServer: WebSocketServer | undefined;
@@ -92,6 +105,78 @@ function modelMappingsPath(): string {
 
 function modelDirectoriesPath(): string {
   return join(app.getPath("userData"), "models.json");
+}
+
+function postProcessingPath(): string {
+  return join(app.getPath("userData"), "post-processing.json");
+}
+
+const postProcessingRanges: Record<string, [number, number]> = {
+  ColorGrading_Strength: [0, 1], ColorGrading_HueShift: [-180, 180], ColorGrading_Saturation: [-100, 100],
+  ColorGrading_Brightness: [-100, 100], ColorGrading_Contrast: [-100, 100], ColorGrading_Invert: [0, 1],
+  Bloom_Strength: [0, 1], Vignette_Strength: [0, 1], Vignette_Smoothness: [0, 1], ChromaticAberration_Strength: [0, 1],
+  BlurEffects_Strength: [0, 1], BlurEffects_BasicBlurStrength: [0, 1], Grain_Strength: [0, 1], Grain_Size: [0.1, 3]
+};
+
+function sanitizedPostProcessingValues(value: unknown): Record<string, VtsPostProcessingValue> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Post-processing values must be an object");
+  const output: Record<string, VtsPostProcessingValue> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const range = postProcessingRanges[key];
+    if (!range || typeof raw !== "number" || !Number.isFinite(raw)) throw new Error(`Unsupported post-processing value: ${key}`);
+    output[key] = Math.min(range[1], Math.max(range[0], raw));
+  }
+  return output;
+}
+
+function publicPostProcessingState(): PostProcessingState {
+  return { ...postProcessingState, presets: [...postProcessingState.presets], values: { ...postProcessingState.values }, fadeTime: postProcessingFadeTime };
+}
+
+function savePostProcessing(): Promise<void> {
+  const payload = `${JSON.stringify({ active: postProcessingState.active, activePreset: postProcessingState.activePreset, values: postProcessingState.values }, null, 2)}\n`;
+  const operation = postProcessingSaveQueue.catch(() => undefined).then(async () => {
+    await mkdir(app.getPath("userData"), { recursive: true });
+    await writeFile(postProcessingPath(), payload, { encoding: "utf8", mode: 0o600 });
+  });
+  postProcessingSaveQueue = operation;
+  return operation;
+}
+
+async function loadPostProcessing(): Promise<void> {
+  try {
+    const parsed = JSON.parse(await readFile(postProcessingPath(), "utf8")) as Record<string, unknown>;
+    const values = sanitizedPostProcessingValues(parsed.values ?? {});
+    const activePreset = typeof parsed.activePreset === "string" && (parsed.activePreset === "" || postProcessingPresets[parsed.activePreset]) ? parsed.activePreset : "";
+    postProcessingState = { active: parsed.active !== false, activePreset, presets: Object.keys(postProcessingPresets), values: { ...postProcessingDefaults, ...values } };
+  } catch {
+    postProcessingState = { active: true, activePreset: "", presets: Object.keys(postProcessingPresets), values: { ...postProcessingDefaults } };
+  }
+}
+
+async function updatePostProcessing(input: VtsPostProcessingUpdate): Promise<VtsPostProcessingState | { error: "preset-not-found" }> {
+  let values = input.resetOthers ? { ...postProcessingDefaults } : { ...postProcessingState.values };
+  let activePreset = postProcessingState.activePreset;
+  if (input.preset !== undefined) {
+    if (input.preset && !postProcessingPresets[input.preset]) return { error: "preset-not-found" };
+    values = input.preset ? { ...postProcessingDefaults, ...postProcessingPresets[input.preset] } : values;
+    activePreset = input.preset;
+  }
+  if (input.randomizeAll) {
+    const chaos = Math.max(0, Math.min(1, input.chaosLevel));
+    values = { ...postProcessingDefaults,
+      ColorGrading_Strength: 1, ColorGrading_HueShift: (Math.random() * 80 - 40) * chaos, ColorGrading_Saturation: (Math.random() * 90 - 35) * chaos,
+      Bloom_Strength: Math.random() * chaos * 0.8, Vignette_Strength: Math.random() * chaos * 0.65,
+      ChromaticAberration_Strength: Math.random() * chaos * 0.6, Grain_Strength: Math.random() * chaos * 0.55
+    };
+    activePreset = "";
+  }
+  if (input.values) { values = { ...values, ...sanitizedPostProcessingValues(input.values) }; activePreset = ""; }
+  postProcessingFadeTime = input.fadeTime;
+  postProcessingState = { active: input.active ?? postProcessingState.active, activePreset, presets: Object.keys(postProcessingPresets), values };
+  await savePostProcessing();
+  broadcast("post-processing-changed", publicPostProcessingState());
+  return postProcessingState;
 }
 
 function saveModelDirectories(): Promise<void> {
@@ -1240,7 +1325,9 @@ function startVtsApiServer(): void {
     loadItem: loadVtsItem,
     unloadItems: unloadVtsItems,
     moveItems: moveVtsItems,
-    pinItem: pinVtsItem
+    pinItem: pinVtsItem,
+    postProcessingState: () => postProcessingState,
+    updatePostProcessing
   };
 
   vtsApiServer = new WebSocketServer({ host: "127.0.0.1", port: VTS_API_PORT, maxPayload: 1024 * 1024 });
@@ -1412,6 +1499,26 @@ app.whenReady().then(async () => {
     if (typeof requestedModelID !== "string" || !requestedModelID.trim() || requestedModelID.length > 256) throw new Error("Invalid model ID");
     if (await loadVtsModel(requestedModelID) !== "loaded") throw new Error("Model is no longer available in the library");
     return sceneWorkspace();
+  });
+  ipcMain.handle("get-post-processing-state", () => publicPostProcessingState());
+  ipcMain.handle("update-post-processing", async (_event, requestedUpdate: unknown) => {
+    if (!requestedUpdate || typeof requestedUpdate !== "object" || Array.isArray(requestedUpdate)) throw new Error("Invalid post-processing update");
+    const update = requestedUpdate as Record<string, unknown>;
+    if (update.active !== undefined && typeof update.active !== "boolean") throw new Error("Invalid post-processing active state");
+    if (update.preset !== undefined && (typeof update.preset !== "string" || update.preset.length > 128)) throw new Error("Invalid post-processing preset");
+    const fadeTime = update.fadeTime === undefined ? 0.2 : update.fadeTime;
+    if (typeof fadeTime !== "number" || !Number.isFinite(fadeTime) || fadeTime < 0 || fadeTime > 2) throw new Error("Invalid post-processing fade time");
+    const result = await updatePostProcessing({
+      active: update.active as boolean | undefined,
+      preset: update.preset as string | undefined,
+      values: update.values === undefined ? undefined : sanitizedPostProcessingValues(update.values),
+      resetOthers: update.resetOthers === true,
+      fadeTime,
+      randomizeAll: false,
+      chaosLevel: 0
+    });
+    if ("error" in result) throw new Error("Post-processing preset was not found");
+    return publicPostProcessingState();
   });
   ipcMain.handle("update-model-mappings", async (_event, requestedMappings: unknown) => {
     if (!activeImportedModel || !activeModelRoot) throw new Error("Import a model before editing tracking mappings");
@@ -1658,7 +1765,7 @@ app.whenReady().then(async () => {
     publishPhysicsControl();
     return true;
   });
-  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadModelMappingOverrides(), loadModelDirectories(), loadScenes()]);
+  await Promise.all([loadTrustedDevices(), loadPluginAccess(), loadCustomParameters(), loadItemFiles(), loadModelMappingOverrides(), loadModelDirectories(), loadScenes(), loadPostProcessing()]);
   await Promise.all([backfillItemFilesFromScenes(), backfillModelDirectoriesFromScenes()]);
   await loadActiveSceneModel();
   startTrackingServer();

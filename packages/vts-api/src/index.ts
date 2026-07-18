@@ -205,6 +205,25 @@ export interface VtsPhysicsOverride {
   overrideSeconds: number;
 }
 
+export type VtsPostProcessingValue = number | boolean | string;
+
+export interface VtsPostProcessingState {
+  active: boolean;
+  activePreset: string;
+  presets: string[];
+  values: Record<string, VtsPostProcessingValue>;
+}
+
+export interface VtsPostProcessingUpdate {
+  active?: boolean;
+  preset?: string;
+  values?: Record<string, VtsPostProcessingValue>;
+  resetOthers: boolean;
+  fadeTime: number;
+  randomizeAll: boolean;
+  chaosLevel: number;
+}
+
 export interface VtsApiHost {
   version: string;
   startedAt: number;
@@ -235,6 +254,8 @@ export interface VtsApiHost {
   unloadItems(pluginName: string, pluginDeveloper: string, input: { unloadAllInScene: boolean; unloadAllLoadedByThisPlugin: boolean; allowOthers: boolean; instanceIDs: string[]; fileNames: string[] }): Promise<VtsSceneItem[]>;
   moveItems(inputs: VtsItemMoveInput[]): Promise<Array<{ itemInstanceID: string; success: boolean; errorID: number }>>;
   pinItem(input: VtsItemPinInput): Promise<{ item?: VtsSceneItem; error?: "item-not-found" | "invalid-mode" | "model-not-found" | "artmesh-not-found" | "invalid-position" }>;
+  postProcessingState(): VtsPostProcessingState;
+  updatePostProcessing(input: VtsPostProcessingUpdate): Promise<VtsPostProcessingState | { error: "preset-not-found" }>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -264,6 +285,86 @@ function stringArray(value: unknown, max = 64): string[] | undefined {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > max || value.some((item) => typeof item !== "string" || item.length > 256)) return undefined;
   return value as string[];
+}
+
+type PostProcessingConfigType = "Float" | "Int" | "Bool" | "Color" | "String";
+interface PostProcessingConfigDefinition {
+  enumID: string;
+  explanation: string;
+  type: PostProcessingConfigType;
+  activationConfig: boolean;
+  defaultValue: VtsPostProcessingValue;
+  min?: number;
+  max?: number;
+  colorHasAlpha?: boolean;
+}
+interface PostProcessingEffectDefinition {
+  enumID: string;
+  explanation: string;
+  configs: PostProcessingConfigDefinition[];
+}
+
+const postProcessingEffects: PostProcessingEffectDefinition[] = [
+  { enumID: "ColorGrading", explanation: "Color grading", configs: [
+    { enumID: "ColorGrading_Strength", explanation: "Effect on/off", type: "Float", activationConfig: true, defaultValue: 0, min: 0, max: 1 },
+    { enumID: "ColorGrading_HueShift", explanation: "Hue shift", type: "Float", activationConfig: false, defaultValue: 0, min: -180, max: 180 },
+    { enumID: "ColorGrading_Saturation", explanation: "Saturation", type: "Float", activationConfig: false, defaultValue: 0, min: -100, max: 100 },
+    { enumID: "ColorGrading_Brightness", explanation: "Brightness", type: "Float", activationConfig: false, defaultValue: 0, min: -100, max: 100 },
+    { enumID: "ColorGrading_Contrast", explanation: "Contrast", type: "Float", activationConfig: false, defaultValue: 0, min: -100, max: 100 },
+    { enumID: "ColorGrading_Invert", explanation: "Invert color", type: "Float", activationConfig: false, defaultValue: 0, min: 0, max: 1 }
+  ] },
+  { enumID: "Bloom", explanation: "Bloom", configs: [
+    { enumID: "Bloom_Strength", explanation: "Effect on/off", type: "Float", activationConfig: true, defaultValue: 0, min: 0, max: 1 }
+  ] },
+  { enumID: "Vignette", explanation: "Vignette", configs: [
+    { enumID: "Vignette_Strength", explanation: "Effect on/off", type: "Float", activationConfig: true, defaultValue: 0, min: 0, max: 1 },
+    { enumID: "Vignette_Smoothness", explanation: "Smoothness", type: "Float", activationConfig: false, defaultValue: 0.9, min: 0, max: 1 }
+  ] },
+  { enumID: "ChromaticAberration", explanation: "Chromatic aberration", configs: [
+    { enumID: "ChromaticAberration_Strength", explanation: "Effect on/off", type: "Float", activationConfig: true, defaultValue: 0, min: 0, max: 1 }
+  ] },
+  { enumID: "BlurEffects", explanation: "Blur effects", configs: [
+    { enumID: "BlurEffects_Strength", explanation: "Effect on/off", type: "Float", activationConfig: true, defaultValue: 0, min: 0, max: 1 },
+    { enumID: "BlurEffects_BasicBlurStrength", explanation: "Blur strength", type: "Float", activationConfig: false, defaultValue: 0, min: 0, max: 1 }
+  ] },
+  { enumID: "Grain", explanation: "Film grain", configs: [
+    { enumID: "Grain_Strength", explanation: "Effect on/off", type: "Float", activationConfig: true, defaultValue: 0, min: 0, max: 1 },
+    { enumID: "Grain_Size", explanation: "Size", type: "Float", activationConfig: false, defaultValue: 1.7, min: 0.1, max: 3 }
+  ] }
+];
+
+const postProcessingConfigs = postProcessingEffects.flatMap((effect) => effect.configs);
+const normalizePostProcessingID = (value: string): string => value.replace(/[_-]/g, "").toLowerCase();
+const configByNormalizedID = new Map(postProcessingConfigs.map((config) => [normalizePostProcessingID(config.enumID), config]));
+
+function postProcessingConfigPayload(config: PostProcessingConfigDefinition, state: VtsPostProcessingState): JsonObject {
+  const value = state.values[config.enumID] ?? config.defaultValue;
+  const numeric = typeof value === "number" ? value : 0;
+  const bool = typeof value === "boolean" ? value : false;
+  const text = typeof value === "string" ? value : "";
+  return {
+    internalID: config.enumID.replaceAll("_", "-").toLowerCase(), enumID: config.enumID,
+    explanation: config.explanation, type: config.type, activationConfig: config.activationConfig,
+    floatValue: config.type === "Float" ? numeric : 0, floatMin: config.type === "Float" ? config.min ?? 0 : 0, floatMax: config.type === "Float" ? config.max ?? 0 : 0, floatDefault: config.type === "Float" ? config.defaultValue : 0,
+    intValue: config.type === "Int" ? numeric : 0, intMin: config.type === "Int" ? config.min ?? 0 : 0, intMax: config.type === "Int" ? config.max ?? 0 : 0, intDefault: config.type === "Int" ? config.defaultValue : 0,
+    colorValue: config.type === "Color" ? text : "", colorDefault: config.type === "Color" ? config.defaultValue : "", colorHasAlpha: config.type === "Color" ? config.colorHasAlpha === true : false,
+    boolValue: config.type === "Bool" ? bool : false, boolDefault: config.type === "Bool" ? config.defaultValue : false,
+    stringValue: config.type === "String" ? text : "", stringDefault: config.type === "String" ? config.defaultValue : "",
+    sceneItemValue: "", sceneItemDefault: ""
+  };
+}
+
+function parsePostProcessingValue(config: PostProcessingConfigDefinition, raw: string): VtsPostProcessingValue | undefined {
+  if (raw.length > 256) return undefined;
+  if (config.type === "Float" || config.type === "Int") {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return undefined;
+    const clamped = Math.min(config.max ?? value, Math.max(config.min ?? value, value));
+    return config.type === "Int" ? Math.round(clamped) : clamped;
+  }
+  if (config.type === "Bool") return /^true$/i.test(raw) ? true : /^false$/i.test(raw) ? false : undefined;
+  if (config.type === "Color") return /^[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(raw) ? raw.toUpperCase() : undefined;
+  return raw;
 }
 
 function validatedEventConfig(eventName: VtsEventName, value: unknown): Record<string, unknown> | undefined {
@@ -747,6 +848,78 @@ export async function handleVtsApiRequest(raw: string, session: VtsApiSession, h
     if (pinned.error === "invalid-position") return error(requestID, 1054, "Item pin position is invalid");
     return response("ItemPinResponse", requestID, {
       isPinned: data.pin, itemInstanceID: pinned.item!.instanceID, itemFileName: pinned.item!.fileName
+    });
+  }
+
+  if (request.messageType === "PostProcessingListRequest") {
+    const filters = stringArray(data.effectIDFilter, 512);
+    if (!filters) return error(requestID, 1150, "Post-processing effect filter is invalid or contains more than 512 entries");
+    const normalizedFilters = new Set(filters.map(normalizePostProcessingID));
+    const filtered = normalizedFilters.size === 0 ? postProcessingEffects : postProcessingEffects.filter((effect) => normalizedFilters.has(normalizePostProcessingID(effect.enumID)));
+    const state = host.postProcessingState();
+    const effectIsActive = (effect: PostProcessingEffectDefinition) => effect.configs.some((config) => config.activationConfig && Number(state.values[config.enumID] ?? config.defaultValue) > 0);
+    const effectPayload = filtered.map((effect) => ({
+      internalID: effect.enumID.replaceAll("_", "-").toLowerCase(), enumID: effect.enumID, explanation: effect.explanation,
+      effectIsActive: effectIsActive(effect), effectIsRestricted: false,
+      configEntries: effect.configs.map((config) => postProcessingConfigPayload(config, state))
+    }));
+    return response("PostProcessingListResponse", requestID, {
+      postProcessingSupported: true, postProcessingActive: state.active, canSendPostProcessingUpdateRequestRightNow: true,
+      restrictedEffectsAllowed: false, presetIsActive: state.active && Boolean(state.activePreset), activePreset: state.active ? state.activePreset : "",
+      presetCount: data.fillPostProcessingPresetsArray === true ? state.presets.length : 0,
+      activeEffectCount: postProcessingEffects.filter(effectIsActive).length,
+      effectCountBeforeFilter: postProcessingEffects.length, configCountBeforeFilter: postProcessingConfigs.length,
+      effectCountAfterFilter: filtered.length, configCountAfterFilter: filtered.reduce((count, effect) => count + effect.configs.length, 0),
+      postProcessingEffects: data.fillPostProcessingEffectsArray === true ? effectPayload : [],
+      postProcessingPresets: data.fillPostProcessingPresetsArray === true ? state.presets : []
+    });
+  }
+
+  if (request.messageType === "PostProcessingUpdateRequest") {
+    const fadeTime = data.postProcessingFadeTime === undefined ? 0 : data.postProcessingFadeTime;
+    if (typeof fadeTime !== "number" || !Number.isFinite(fadeTime) || fadeTime < 0 || fadeTime > 2) return error(requestID, 1201, "Post-processing fade time must be between 0 and 2 seconds");
+    const setPreset = data.setPostProcessingPreset === true;
+    const setValues = data.setPostProcessingValues === true;
+    if (setPreset && setValues) return error(requestID, 1202, "A preset and individual values cannot be loaded in the same request");
+    if (data.postProcessingOn !== undefined && typeof data.postProcessingOn !== "boolean") return error(requestID, 1204, "Post-processing active state is invalid");
+    const update: VtsPostProcessingUpdate = {
+      active: typeof data.postProcessingOn === "boolean" ? data.postProcessingOn : undefined,
+      resetOthers: data.setAllOtherValuesToDefault === true,
+      fadeTime,
+      randomizeAll: data.randomizeAll === true,
+      chaosLevel: typeof data.randomizeAllChaosLevel === "number" && Number.isFinite(data.randomizeAllChaosLevel) ? Math.max(0, Math.min(1, data.randomizeAllChaosLevel)) : 0
+    };
+    if (setPreset) {
+      const preset = stringField(data, "presetToSet");
+      if (preset === undefined || preset.length > 128) return error(requestID, 1203, "Post-processing preset was not found");
+      update.preset = preset;
+    }
+    if (setValues) {
+      if (!Array.isArray(data.postProcessingValues) || data.postProcessingValues.length > 512) return error(requestID, 1204, "Post-processing value list is invalid");
+      const values: Record<string, VtsPostProcessingValue> = {};
+      const used = new Set<string>();
+      for (const rawEntry of data.postProcessingValues) {
+        const entry = objectData(rawEntry);
+        const configID = stringField(entry, "configID"), configValue = stringField(entry, "configValue");
+        if (!configID || configValue === undefined) return error(requestID, 1204, "Post-processing value list is invalid");
+        const normalizedID = normalizePostProcessingID(configID);
+        if (used.has(normalizedID)) return error(requestID, 1205, "Post-processing value list contains duplicate config IDs");
+        used.add(normalizedID);
+        const config = configByNormalizedID.get(normalizedID);
+        const parsed = config ? parsePostProcessingValue(config, configValue) : undefined;
+        if (!config || parsed === undefined) return error(requestID, 1204, `Post-processing config or value is invalid: ${configID}`);
+        values[config.enumID] = parsed;
+      }
+      update.values = values;
+    }
+    const updated = await host.updatePostProcessing(update);
+    if ("error" in updated) return error(requestID, 1203, "Post-processing preset was not found");
+    const activeEffectCount = postProcessingEffects.filter((effect) => effect.configs.some((config) => config.activationConfig && Number(updated.values[config.enumID] ?? config.defaultValue) > 0)).length;
+    return response("PostProcessingUpdateResponse", requestID, {
+      postProcessingActive: updated.active,
+      presetIsActive: updated.active && Boolean(updated.activePreset),
+      activePreset: updated.active ? updated.activePreset : "",
+      activeEffectCount
     });
   }
 

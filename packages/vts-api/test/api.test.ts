@@ -6,6 +6,7 @@ function request(messageType: string, data?: unknown): string {
 }
 
 function host(): VtsApiHost {
+  let postProcessing = { active: true, activePreset: "", presets: ["Dreamy"], values: { ColorGrading_Strength: 0, Bloom_Strength: 0 } };
   return {
     version: "0.1.0",
     startedAt: Date.now() - 1000,
@@ -52,6 +53,17 @@ function host(): VtsApiHost {
     moveItems: async (inputs) => inputs.map((input) => ({ itemInstanceID: input.itemInstanceID, success: true, errorID: -1 })),
     pinItem: async (input) => input.itemInstanceID === "missing" ? { error: "item-not-found" } : {
       item: { fileName: "hat.png", instanceID: input.itemInstanceID, order: 1, type: "PNG", censored: false, flipped: false, locked: false, smoothing: 0, framerate: 0, frameCount: -1, currentFrame: -1, pinnedToModel: input.pin, pinnedModelID: input.pin ? "haru" : "", pinnedArtMeshID: input.pin ? "HairFront" : "", groupName: "", sceneName: "Main", fromWorkshop: false }
+    },
+    postProcessingState: () => postProcessing,
+    updatePostProcessing: async (input) => {
+      if (input.preset !== undefined && input.preset !== "" && !postProcessing.presets.includes(input.preset)) return { error: "preset-not-found" };
+      postProcessing = {
+        ...postProcessing,
+        active: input.active ?? postProcessing.active,
+        activePreset: input.preset ?? (input.values ? "" : postProcessing.activePreset),
+        values: { ...(input.resetOthers ? {} : postProcessing.values), ...input.values }
+      };
+      return postProcessing;
     }
   };
 }
@@ -248,5 +260,34 @@ describe("VTube Studio API compatibility core", () => {
     expect((invalidWeights.data as { errorID: number }).errorID).toBe(1054);
     const missing = await handleVtsApiRequest(request("ItemPinRequest", { pin: false, itemInstanceID: "missing" }), session, host());
     expect((missing.data as { errorID: number }).errorID).toBe(1050);
+  });
+
+  it("lists supported post-processing effects with normalized filters", async () => {
+    const output = await handleVtsApiRequest(request("PostProcessingListRequest", {
+      fillPostProcessingPresetsArray: true, fillPostProcessingEffectsArray: true, effectIDFilter: ["color_grading", "BLOOM"]
+    }), { authenticated: true }, host());
+    expect(output.messageType).toBe("PostProcessingListResponse");
+    expect((output.data as { effectCountAfterFilter: number }).effectCountAfterFilter).toBe(2);
+    expect((output.data as { postProcessingEffects: Array<{ enumID: string }> }).postProcessingEffects.map((effect) => effect.enumID)).toEqual(["ColorGrading", "Bloom"]);
+    expect((output.data as { postProcessingPresets: string[] }).postProcessingPresets).toEqual(["Dreamy"]);
+  });
+
+  it("updates, clamps, and validates post-processing config values", async () => {
+    const apiHost = host();
+    const updated = await handleVtsApiRequest(request("PostProcessingUpdateRequest", {
+      postProcessingOn: true, setPostProcessingValues: true, postProcessingFadeTime: 0.5,
+      postProcessingValues: [{ configID: "color-grading_brightness", configValue: "150" }, { configID: "Bloom_Strength", configValue: "0.8" }]
+    }), { authenticated: true }, apiHost);
+    expect(updated.messageType).toBe("PostProcessingUpdateResponse");
+    expect(apiHost.postProcessingState().values.ColorGrading_Brightness).toBe(100);
+    expect((updated.data as { activeEffectCount: number }).activeEffectCount).toBe(1);
+    const duplicate = await handleVtsApiRequest(request("PostProcessingUpdateRequest", {
+      setPostProcessingValues: true, postProcessingValues: [{ configID: "Bloom_Strength", configValue: "1" }, { configID: "bloom-strength", configValue: "0" }]
+    }), { authenticated: true }, apiHost);
+    expect((duplicate.data as { errorID: number }).errorID).toBe(1205);
+    const missingPreset = await handleVtsApiRequest(request("PostProcessingUpdateRequest", {
+      setPostProcessingPreset: true, presetToSet: "Missing"
+    }), { authenticated: true }, apiHost);
+    expect((missingPreset.data as { errorID: number }).errorID).toBe(1203);
   });
 });

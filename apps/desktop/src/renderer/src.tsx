@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import type { TrackingFrame } from "@lumastage/protocol";
 import { mapARKitToVTubeInputs } from "@lumastage/tracking-core";
-import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge";
+import type { DesktopStatus, ImportedHotkey, ImportedModel, LumaStageBridge, ModelLibrary, PluginAuthorizationRequest, PostProcessingState, SceneItem, SceneItemUpdate, SceneLibrary, SceneTransform, SceneUpdate, SceneWorkspace, VtsArtMeshTintState, VtsExpressionActivation, VtsModelMoveAnimation, VtsParameterInjection, VtsPhysicsControl, VTubeParameterMapping } from "../shared/bridge";
 import type { CubismCoreStatus } from "../shared/bridge";
 import { Live2DStage } from "./components/Live2DStage";
 import "./style.css";
@@ -131,7 +131,7 @@ function MappingEditor({ model, frame, onClose, onSaved }: { model: ImportedMode
   </section></div>;
 }
 
-type AppView = "stage" | "models" | "tracking" | "settings";
+type AppView = "stage" | "models" | "tracking" | "effects" | "settings";
 
 function ModelsView({ library, model, onImport, onLoad }: { library: ModelLibrary; model: ImportedModel | null; onImport(): void; onLoad(modelID: string): void }) {
   return <div className="view-page">
@@ -155,6 +155,29 @@ function TrackingView({ frame, status, model, onCalibrate, onEditMappings }: { f
     <section className={`tracking-hero${frame.faceFound ? " online" : ""}`}><div className="face-orbit"><div>⌁</div><i /></div><div><small>TRUEDEPTH LINK</small><h2>{frame.faceFound ? "Face tracking is live" : status.connectedDevices ? "iPhone connected — find your face" : "Connect your iPhone tracker"}</h2><p>{status.connectedDevices ? `${status.connectedDevices} secure tracker connection${status.connectedDevices === 1 ? "" : "s"} · frame ${frame.sequence || "idle"}` : <>Enter pairing code <strong>{status.pairingCode}</strong> in the LumaStage iPhone app.</>}</p></div><div className="tracking-actions"><button className="hero-action" disabled={!frame.faceFound} onClick={onCalibrate}>◎ Calibrate</button>{model && <button className="ghost-action" onClick={onEditMappings}>Edit mappings</button>}</div></section>
     <section className="signal-grid">{signals.map(([label, value]) => <article className="signal-card" key={label}><div><span>{label}</span><b>{Math.max(0, Math.min(1, value)).toFixed(2)}</b></div><div className="large-meter"><i style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }} /></div></article>)}</section>
     <section className="privacy-strip"><div>♢</div><p><b>Private by design</b><br />Only animation values are sent over your local network. LumaStage does not stream or save the camera image.</p><code>ws://local:{status.port}</code></section>
+  </div>;
+}
+
+const effectControls = [
+  { id: "Bloom_Strength", label: "Bloom", detail: "Soft luminous highlights", min: 0, max: 1, step: 0.01 },
+  { id: "Vignette_Strength", label: "Vignette", detail: "Cinematic edge shading", min: 0, max: 1, step: 0.01 },
+  { id: "ChromaticAberration_Strength", label: "Chromatic", detail: "RGB edge separation", min: 0, max: 1, step: 0.01 },
+  { id: "BlurEffects_BasicBlurStrength", label: "Soft focus", detail: "Smooth scene blur", min: 0, max: 1, step: 0.01, companion: "BlurEffects_Strength" },
+  { id: "Grain_Strength", label: "Film grain", detail: "Animated texture", min: 0, max: 1, step: 0.01 },
+  { id: "ColorGrading_HueShift", label: "Hue", detail: "Rotate scene colors", min: -180, max: 180, step: 1, companion: "ColorGrading_Strength" },
+  { id: "ColorGrading_Saturation", label: "Saturation", detail: "Color intensity", min: -100, max: 100, step: 1, companion: "ColorGrading_Strength" },
+  { id: "ColorGrading_Contrast", label: "Contrast", detail: "Light and shadow separation", min: -100, max: 100, step: 1, companion: "ColorGrading_Strength" }
+] as const;
+
+function EffectsView({ state, onUpdate }: { state: PostProcessingState; onUpdate(update: { active?: boolean; preset?: string; values?: Record<string, number>; resetOthers?: boolean }): void }) {
+  return <div className="view-page">
+    <section className={`view-hero effects-hero${state.active ? " active" : ""}`}><div><small>REAL-TIME VFX</small><h2>Shape the atmosphere</h2><p>Effects apply to the rendered model and scene items, persist between launches and can be controlled through the VTube Studio plugin API.</p></div><button className={state.active ? "vfx-power active" : "vfx-power"} onClick={() => onUpdate({ active: !state.active })}><i />{state.active ? "Effects on" : "Effects off"}</button></section>
+    <div className="preset-row"><span>Looks</span>{state.presets.map((preset) => <button key={preset} className={state.activePreset === preset ? "active" : ""} onClick={() => onUpdate({ active: true, preset })}>{preset}</button>)}<button onClick={() => onUpdate({ active: true, preset: "", resetOthers: true })}>Clean</button><button className="reset-vfx" onClick={() => onUpdate({ preset: "", resetOthers: true })}>Reset all</button></div>
+    <section className="effects-grid">{effectControls.map((control) => {
+      const value = Number(state.values[control.id] ?? 0);
+      const percentage = (value - control.min) / (control.max - control.min) * 100;
+      return <article className={Math.abs(value) > 0.001 ? "effect-card active" : "effect-card"} key={control.id}><div className="effect-card-title"><div><h3>{control.label}</h3><p>{control.detail}</p></div><b>{control.max > 1 ? Math.round(value) : value.toFixed(2)}</b></div><input aria-label={control.label} type="range" min={control.min} max={control.max} step={control.step} value={value} style={{ "--value": `${percentage}%` } as React.CSSProperties} onChange={(event) => { const next = Number(event.target.value); const values: Record<string, number> = { [control.id]: next }; if ("companion" in control) values[control.companion] = Math.abs(next) > 0.001 ? 1 : 0; onUpdate({ active: true, values }); }} /></article>;
+    })}</section>
   </div>;
 }
 
@@ -195,6 +218,7 @@ function App() {
   const [mappingEditorOpen, setMappingEditorOpen] = useState(false);
   const [activeView, setActiveView] = useState<AppView>("stage");
   const [modelLibrary, setModelLibrary] = useState<ModelLibrary>({ models: [] });
+  const [postProcessing, setPostProcessing] = useState<PostProcessingState>({ active: true, activePreset: "", presets: ["Dreamy", "Noir", "Retro"], values: {}, fadeTime: 0 });
 
   useEffect(() => {
     const offFrame = window.lumastage.onTrackingFrame(setFrame);
@@ -207,11 +231,13 @@ function App() {
     const offPhysicsControl = window.lumastage.onVtsPhysicsControl(setPhysicsControl);
     const offModelMove = window.lumastage.onVtsModelMove((value) => setModelMove({ nonce: Date.now(), value }));
     const offSceneWorkspace = window.lumastage.onSceneWorkspaceChanged((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); void window.lumastage.getModelLibrary().then(setModelLibrary); });
+    const offPostProcessing = window.lumastage.onPostProcessingChanged(setPostProcessing);
     void window.lumastage.getDesktopStatus().then(setStatus);
     void window.lumastage.getCubismCoreStatus().then(setCoreStatus);
     void window.lumastage.getModelLibrary().then(setModelLibrary).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+    void window.lumastage.getPostProcessingState().then(setPostProcessing).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
     void window.lumastage.getSceneWorkspace().then((workspace) => { setSceneLibrary(workspace.library); setModel(workspace.model); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); offExpressionActivation(); offArtMeshTint(); offPhysicsControl(); offModelMove(); offSceneWorkspace(); };
+    return () => { offFrame(); offStatus(); offPluginRequest(); offVtsHotkey(); offParameterInjection(); offExpressionActivation(); offArtMeshTint(); offPhysicsControl(); offModelMove(); offSceneWorkspace(); offPostProcessing(); };
   }, []);
 
   useEffect(() => {
@@ -321,21 +347,43 @@ function App() {
     if (background.kind === "color") return { background: background.color };
     return { backgroundImage: `linear-gradient(#07091222, #07091222), url("${background.imageUrl}?scene=${activeScene.id}")`, backgroundSize: "cover", backgroundPosition: "center" };
   }, [activeScene, overlayMode]);
+  const postProcessingStyle = useMemo<React.CSSProperties>(() => {
+    const value = (id: string, fallback = 0) => Number(postProcessing.values[id] ?? fallback);
+    const enabled = postProcessing.active ? 1 : 0;
+    const color = value("ColorGrading_Strength") * enabled;
+    const blur = value("BlurEffects_Strength") * value("BlurEffects_BasicBlurStrength") * enabled;
+    const bloom = value("Bloom_Strength") * enabled;
+    const chromatic = value("ChromaticAberration_Strength") * enabled;
+    return {
+      filter: `hue-rotate(${value("ColorGrading_HueShift") * color}deg) saturate(${Math.max(0, 1 + value("ColorGrading_Saturation") / 100 * color)}) brightness(${Math.max(0, 1 + value("ColorGrading_Brightness") / 100 * color)}) contrast(${Math.max(0, 1 + value("ColorGrading_Contrast") / 100 * color)}) invert(${value("ColorGrading_Invert") * color}) blur(${blur * 8}px) drop-shadow(${chromatic * 8}px 0 ${chromatic * 2}px #ff386c99) drop-shadow(${-chromatic * 8}px 0 ${chromatic * 2}px #35d9ff99) drop-shadow(0 0 ${bloom * 24}px #b895ffcc)`,
+      transition: `filter ${postProcessing.fadeTime}s ease`,
+      "--vfx-vignette": String(value("Vignette_Strength") * enabled),
+      "--vfx-vignette-soft": String(value("Vignette_Smoothness", 0.9)),
+      "--vfx-grain": String(value("Grain_Strength") * enabled),
+      "--vfx-grain-size": `${Math.max(1, value("Grain_Size", 1.7) * 2.4)}px`,
+      "--vfx-fade": `${postProcessing.fadeTime}s`
+    } as React.CSSProperties;
+  }, [postProcessing]);
+  const updatePostProcessing = async (update: { active?: boolean; preset?: string; values?: Record<string, number>; resetOthers?: boolean }) => {
+    try { setPostProcessing(await window.lumastage.updatePostProcessing({ ...update, fadeTime: 0.25 })); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
 
   return <main className={`shell${overlayMode ? " overlay" : ""}`}>
     <aside className="rail">
       <div className="logo"><div>LS</div><span>Luma<br />Stage</span></div>
-      <nav>{(["stage", "models", "tracking", "settings"] as const).map((view) => <button key={view} className={activeView === view ? "active" : ""} aria-current={activeView === view ? "page" : undefined} onClick={() => setActiveView(view)}>{view === "stage" ? "◈" : view === "models" ? "◇" : view === "tracking" ? "⌁" : "⚙"}<span>{view[0].toUpperCase() + view.slice(1)}</span></button>)}</nav>
+      <nav>{(["stage", "models", "tracking", "effects", "settings"] as const).map((view) => <button key={view} className={activeView === view ? "active" : ""} aria-current={activeView === view ? "page" : undefined} onClick={() => setActiveView(view)}>{view === "stage" ? "◈" : view === "models" ? "◇" : view === "tracking" ? "⌁" : view === "effects" ? "✦" : "⚙"}<span>{view[0].toUpperCase() + view.slice(1)}</span></button>)}</nav>
       <div className="version">v0.1</div>
     </aside>
 
     <section className="workspace">
-      <header><div><small>{activeView === "stage" ? "LIVE WORKSPACE" : activeView === "models" ? "MODEL LIBRARY" : activeView === "tracking" ? "FACIAL CAPTURE" : "PREFERENCES"}</small><h1>{activeView[0].toUpperCase() + activeView.slice(1)}</h1></div><div className={`connection ${status.connectedDevices ? "online" : ""}`}><i />{connectionLabel}<span>:{status.port}</span></div></header>
+      <header><div><small>{activeView === "stage" ? "LIVE WORKSPACE" : activeView === "models" ? "MODEL LIBRARY" : activeView === "tracking" ? "FACIAL CAPTURE" : activeView === "effects" ? "SCENE ATMOSPHERE" : "PREFERENCES"}</small><h1>{activeView[0].toUpperCase() + activeView.slice(1)}</h1></div><div className={`connection ${status.connectedDevices ? "online" : ""}`}><i />{connectionLabel}<span>:{status.port}</span></div></header>
       {activeView === "stage" && <div className="stage-grid">
         <section className="stage-card">
           <div className="stage-toolbar"><span>{activeScene?.name ?? "Main Stage"} · {model?.name ?? "Preview avatar"}</span><div><button onClick={() => void updateActiveScene({ transform: neutralSceneTransform })}>⌖ Fit</button><button onClick={() => void toggleOverlay()}>{overlayMode ? "Exit overlay" : "▣ Transparent"}</button></div></div>
           <div className="stage" style={stageStyle}>
             <div className="grid" />
+            <div className="vfx-scene" style={postProcessingStyle}>
             {activeScene?.items.map((item) => <img
               key={item.id}
               ref={(element) => { if (element) itemElements.current.set(item.id, element); else itemElements.current.delete(item.id); }}
@@ -348,6 +396,9 @@ function App() {
             />)}
             {!rendererReady && <AvatarPreview frame={frame} />}
             <Live2DStage model={model} frame={frame} calibrationNonce={calibrationNonce} hotkeyRequest={hotkeyRequest} parameterInjection={parameterInjection} expressionRequest={expressionRequest} artMeshTint={artMeshTint} physicsControl={physicsControl} modelMove={modelMove} sceneTransform={activeScene?.transform ?? neutralSceneTransform} pinnedItems={activeScene?.items.filter((item) => item.pin) ?? []} onPinnedItemLayout={applyPinnedItemLayout} onReady={setRendererReady} onError={setRendererError} />
+            </div>
+            <div className="vfx-vignette" style={postProcessingStyle} />
+            <div className="vfx-grain" style={postProcessingStyle} />
             <div className="tracking-pill"><i className={frame.faceFound ? "online" : ""} />{frame.faceFound ? "Face tracked" : rendererReady ? "Model ready" : "Neutral preview"}</div>
             {overlayMode && <button className="exit-overlay" onClick={() => void toggleOverlay(false)}>Exit overlay · Esc</button>}
           </div>
@@ -386,6 +437,7 @@ function App() {
       </div>}
       {activeView === "models" && <ModelsView library={modelLibrary} model={model} onImport={() => void importModel()} onLoad={(modelID) => void loadLibraryModel(modelID)} />}
       {activeView === "tracking" && <TrackingView frame={frame} status={status} model={model} onCalibrate={() => setCalibrationNonce((value) => value + 1)} onEditMappings={() => setMappingEditorOpen(true)} />}
+      {activeView === "effects" && <EffectsView state={postProcessing} onUpdate={(update) => void updatePostProcessing(update)} />}
       {activeView === "settings" && <SettingsView coreStatus={coreStatus} coreInstalling={coreInstalling} status={status} onInstallCore={() => void installCore()} onForgetTrackers={() => void window.lumastage.forgetTrustedDevices()} onForgetPlugins={() => void window.lumastage.forgetPluginAccess()} />}
     </section>
     {(error || rendererError) && <div className="error-toast" role="alert">{error ?? rendererError}<button aria-label="Dismiss error" onClick={() => { setError(null); setRendererError(null); }}>×</button></div>}

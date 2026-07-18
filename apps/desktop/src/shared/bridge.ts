@@ -46,6 +46,22 @@ export interface ModelLibrary {
   activeModelID?: string;
 }
 
+export interface PostProcessingState {
+  active: boolean;
+  activePreset: string;
+  presets: string[];
+  values: Record<string, number | boolean | string>;
+  fadeTime: number;
+}
+
+export interface PostProcessingUpdate {
+  active?: boolean;
+  preset?: string;
+  values?: Record<string, number | boolean | string>;
+  resetOthers?: boolean;
+  fadeTime?: number;
+}
+
 export interface ImportedHotkey {
   id: string;
   name: string;
@@ -206,10 +222,13 @@ export interface LumaStageBridge {
   onVtsPhysicsControl(listener: (state: VtsPhysicsControl) => void): () => void;
   onVtsModelMove(listener: (move: VtsModelMoveAnimation) => void): () => void;
   onSceneWorkspaceChanged(listener: (workspace: SceneWorkspace) => void): () => void;
+  onPostProcessingChanged(listener: (state: PostProcessingState) => void): () => void;
   getDesktopStatus(): Promise<DesktopStatus>;
   importModel(): Promise<ImportedModel | null>;
   getModelLibrary(): Promise<ModelLibrary>;
   loadModelFromLibrary(modelID: string): Promise<SceneWorkspace>;
+  getPostProcessingState(): Promise<PostProcessingState>;
+  updatePostProcessing(update: PostProcessingUpdate): Promise<PostProcessingState>;
   updateModelMappings(mappings: VTubeParameterMapping[]): Promise<ImportedModel>;
   resetModelMappings(): Promise<ImportedModel>;
   getSceneWorkspace(): Promise<SceneWorkspace>;

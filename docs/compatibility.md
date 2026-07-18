@@ -41,8 +41,9 @@ This preserves honest open-source licensing while still building real compatibil
 | Custom tracking parameter creation/deletion | Compatible subset | Implemented with persistence, ownership, limits and revocation cleanup |
 | PNG/JPG/GIF scene items and list/load/move/unload API | Compatible subset | Implemented with live canvas, persistent file catalog, ordering and disconnect cleanup |
 | ArtMesh item pin/unpin API | Compatible subset | Provided/Center/Random triangle selection, barycentric deformation following, angle/size modes and official 1050-1054 errors implemented |
+| Post-processing list/update API | Compatible subset | Six rendered effect groups, 14 official config IDs, normalized filters/IDs, native presets, fades, persistence and official 1150/1201-1205 validation implemented |
 | Custom-data, animated-folder and Live2D item APIs | Incremental compatibility | Planned |
-| Remaining VTube Studio plugin API | Incremental compatibility | Advanced item animation/sorting, interactive ArtMesh selection, hotkey configuration, post-processing and additional events remain |
+| Remaining VTube Studio plugin API | Incremental compatibility | Advanced item animation/sorting, interactive ArtMesh selection, hotkey configuration, remaining post-processing configs and additional events remain |
 | Encrypted/locked models | Respect protection; no bypass | By design |
 
 ### VTube Studio sidecars
@@ -52,3 +53,7 @@ VTube Studio's official manual confirms that the human-readable `*.vtube.json` b
 Known tracking inputs currently include face angles/position, per-eye open and gaze, mouth open/smile, brows, cheek puff, angry face, mouth X and tongue. Unknown inputs remain editable rather than being guessed. The visual mapping editor records live input ranges, validates finite limits and keeps overrides in app user data under a SHA-256 model key; it never rewrites the model author's sidecar.
 
 Some VTube Studio packages keep `TriggerAnimation` files under `motions/` while storing only the basename in `*.vtube.json` and omitting them from `model3.json`. LumaStage resolves those paths inside the model boundary, reports missing files normally, and injects a synthetic runtime-only motion group into the manifest response. The model's source files are never changed. Original trigger keys are registered when the sidecar marks the hotkey active/global; unsupported or OS-reserved combinations remain available as visible buttons.
+
+### Post-processing
+
+The native Effects screen and plugin API share one persistent state. The current rendered subset covers ColorGrading, Bloom, Vignette, ChromaticAberration, BlurEffects and Grain using the official effect/config identifiers published by DenchiSoft. IDs are matched case-insensitively with `_` and `-` ignored, numeric values are clamped to the official ranges, duplicate normalized IDs are rejected and updates accept the official 0–2 second fade interval. LumaStage reports only the configs it actually renders rather than pretending to support the full VTube Studio effects catalog.
