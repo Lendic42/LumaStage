@@ -156,3 +156,15 @@ header h1 { margin: 3px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .shell.overlay .exit-overlay:hover { opacity: 1; cursor: pointer; }
 @media (max-width: 1040px) { .shell { grid-template-columns: 76px 1fr; }.rail { padding-inline: 9px; }.rail nav { gap: 7px; }.workspace { padding: 20px 18px 22px; }.stage-grid { grid-template-columns: minmax(430px, 1fr) 280px; }.view-hero, .tracking-hero { padding: 27px; }.signal-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-height: 760px) { .avatar-wrap { transform: scale(.8) !important; } .workspace { padding-bottom: 18px; }.stage-grid, .view-page { height: calc(100vh - 120px); } }
+
+/* Virtual camera active */
+.stage-toolbar button.vcam-on {
+  background: linear-gradient(135deg, #3d5afe, #7c4dff);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 0 16px #7c4dff66;
+}
+.stage-toolbar button.ghost-mini {
+  opacity: 0.75;
+  font-size: 0.85em;
+}
