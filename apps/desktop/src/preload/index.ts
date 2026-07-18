@@ -87,6 +87,7 @@ const bridge: LumaStageBridge = {
   setOverlayMode: (enabled) => ipcRenderer.invoke("set-overlay-mode", enabled) as Promise<boolean>,
   setVirtualCamera: (enabled) => ipcRenderer.invoke("set-virtual-camera", enabled) as Promise<VirtualCameraStatus>,
   getVirtualCameraStatus: () => ipcRenderer.invoke("get-virtual-camera-status") as Promise<VirtualCameraStatus>,
+  installVirtualCameraDriver: () => ipcRenderer.invoke("install-virtual-camera-driver") as Promise<VirtualCameraStatus & { installMessage: string }>,
   pushVirtualCameraFrame: (frame) => ipcRenderer.invoke("push-virtual-camera-frame", frame) as Promise<boolean>,
   forgetTrustedDevices: () => ipcRenderer.invoke("forget-trusted-devices") as Promise<boolean>,
   resolvePluginAuthorization: (id, approved) => ipcRenderer.invoke("resolve-plugin-authorization", id, approved) as Promise<boolean>,
