@@ -285,6 +285,8 @@ export interface LumaStageBridge {
   /** Start/stop system virtual webcam (character + transparent bg). */
   setVirtualCamera(enabled: boolean): Promise<VirtualCameraStatus>;
   getVirtualCameraStatus(): Promise<VirtualCameraStatus>;
+  /** Install bundled Unity Capture filter once (UAC). Device: LumaStage Camera. */
+  installVirtualCameraDriver(): Promise<VirtualCameraStatus & { installMessage: string }>;
   /** Push one RGBA frame (character only). */
   pushVirtualCameraFrame(frame: { width: number; height: number; rgba: ArrayBuffer }): Promise<boolean>;
   forgetTrustedDevices(): Promise<boolean>;
