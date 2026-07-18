@@ -24,21 +24,24 @@ This preserves honest open-source licensing while still building real compatibil
 | Capability | Target | Status |
 | --- | --- | --- |
 | Cubism 3/4/5 model folder discovery | Full | Implemented and tested on official Haru sample |
-| `.model3.json`, textures, physics, expressions, motions | Full through installed official Core | Renderer integrated; live Core verification pending |
+| `.model3.json`, textures, physics, expressions, motions | Full through installed official Core | Packaged renderer verified on the supplied NITORUDRAW model with compatible official Core |
 | Common VTube Studio parameter mappings | Import, tune and reset with standard-ID fallback | Implemented with live visual editor and per-model persistence |
-| VTube Studio expression/motion hotkeys | Best effort; unsupported actions reported | Imported and executable from inspector |
+| VTube Studio expression/motion hotkeys | Best effort; unsupported actions reported | Imported and executable; standalone VTS motions outside `model3.json`, labels and global trigger keys are supported |
 | VTube Studio scenes/model-changing hotkeys | Best effort | Planned |
 | LumaStage scene presets | Native equivalent | Implemented with model binding, backgrounds and transforms |
 | VTube Studio plugin authentication/state/statistics | Compatible subset | Implemented and packaged-runtime tested on localhost:8001 |
 | Current model, face-found and model hotkey API | Compatible subset | Implemented; hotkeys limited to supported imported actions |
 | Available model list and model load/unload API | Compatible subset | Implemented with persistent private model library and scene update |
+| Model movement API | Compatible subset | Absolute/relative transforms, official ranges and timed interpolation implemented |
+| ArtMesh list and tint API | Compatible subset | Real renderer Drawable IDs, UserData tags, case-insensitive matchers and disconnect cleanup implemented |
+| Physics read/override API | Compatible subset | Physics groups, single-plugin ownership, base/group override timers and cleanup implemented |
 | Expression state and activation API | Compatible subset | Implemented with parsed expression parameter details and renderer activation |
 | Input/Live2D parameter reads and timed parameter injection | Compatible subset | Implemented with set/add, weights and one-second expiry |
 | VTube Studio event subscriptions | Compatible subset | Implemented for test, model, tracking, background, movement, hotkey and item event types |
 | Custom tracking parameter creation/deletion | Compatible subset | Implemented with persistence, ownership, limits and revocation cleanup |
 | PNG/JPG/GIF scene items and list/load/move/unload API | Compatible subset | Implemented with live canvas, persistent file catalog, ordering and disconnect cleanup |
 | Custom-data, animated-folder and Live2D item APIs | Incremental compatibility | Planned |
-| Remaining VTube Studio plugin API | Incremental compatibility | Model/artmesh, tint, physics and advanced item requests planned |
+| Remaining VTube Studio plugin API | Incremental compatibility | Advanced items, ArtMesh selection/pinning, hotkey configuration and additional events remain |
 | Encrypted/locked models | Respect protection; no bypass | By design |
 
 ### VTube Studio sidecars
@@ -46,3 +49,5 @@ This preserves honest open-source licensing while still building real compatibil
 VTube Studio's official manual confirms that the human-readable `*.vtube.json` beside a model stores its setup, but does not publish a stable schema. LumaStage therefore uses tolerant parsing: known mapping/hotkey fields are imported, extra fields are accepted, and the source file is never rewritten during import. Parameter settings preserve input/output ranges, clamping, custom `OutputLive2D` IDs and smoothing.
 
 Known tracking inputs currently include face angles/position, per-eye open and gaze, mouth open/smile, brows, cheek puff, angry face, mouth X and tongue. Unknown inputs remain editable rather than being guessed. The visual mapping editor records live input ranges, validates finite limits and keeps overrides in app user data under a SHA-256 model key; it never rewrites the model author's sidecar.
+
+Some VTube Studio packages keep `TriggerAnimation` files under `motions/` while storing only the basename in `*.vtube.json` and omitting them from `model3.json`. LumaStage resolves those paths inside the model boundary, reports missing files normally, and injects a synthetic runtime-only motion group into the manifest response. The model's source files are never changed. Original trigger keys are registered when the sidecar marks the hotkey active/global; unsupported or OS-reserved combinations remain available as visible buttons.

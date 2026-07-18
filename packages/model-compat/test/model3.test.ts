@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { inspectCubismModelFolder, parseEditableVTubeParameterMappings } from "../src/index.js";
+import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HOTKEY_MOTION_GROUP } from "../src/index.js";
 
 async function fixture(manifest: unknown): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "lumastage-model-"));
@@ -78,6 +78,8 @@ describe("Cubism model folder inspection", () => {
 
   it("imports VTube Studio parameter mappings and hotkeys without requiring undocumented fields", async () => {
     const root = await fixture({ Version: 3, FileReferences: { Moc: "avatar.moc3", Textures: ["textures/00.png"] } });
+    await mkdir(join(root, "motions"));
+    await writeFile(join(root, "motions", "wave.motion3.json"), JSON.stringify({ Version: 3, Meta: { Duration: 1 }, Curves: [] }));
     await writeFile(join(root, "avatar.vtube.json"), JSON.stringify({
       Version: 1,
       Name: "Configured Avatar",
@@ -90,14 +92,16 @@ describe("Cubism model folder inspection", () => {
         Name: "Auto Breath", Input: "", InputRangeLower: 0, InputRangeUpper: 1,
         OutputRangeLower: 0, OutputRangeUpper: 1, OutputLive2D: "ParamBreath", UseBreathing: true
       }],
-      Hotkeys: [{ HotkeyID: "smile", Name: "Smile", Action: "ToggleExpression", File: "smile.exp3.json" }],
+      Hotkeys: [{ HotkeyID: "wave", Name: "Wave", Action: "TriggerAnimation", File: "wave.motion3.json", Triggers: { Trigger1: "W", Trigger2: "LEFT SHIFT", Trigger3: "" }, IsGlobal: true }],
       UnknownFutureSection: { enabled: true }
     }));
     const model = await inspectCubismModelFolder(root);
     expect(model.vTubeStudio?.name).toBe("Configured Avatar");
     expect(model.vTubeStudio?.parameterMappings[0]).toMatchObject({ input: "FaceAngleX", outputLive2D: "CustomHeadX" });
     expect(model.vTubeStudio?.parameterMappings).toHaveLength(1);
-    expect(model.vTubeStudio?.hotkeys[0]).toMatchObject({ action: "ToggleExpression", file: "smile.exp3.json" });
+    expect(model.vTubeStudio?.hotkeys[0]).toMatchObject({ action: "TriggerAnimation", file: "wave.motion3.json", triggers: ["W", "LEFT SHIFT"], isGlobal: true, isActive: true, motionGroup: VTUBE_HOTKEY_MOTION_GROUP, motionIndex: 0 });
+    expect(model.motionGroups[VTUBE_HOTKEY_MOTION_GROUP]).toEqual([join(root, "motions", "wave.motion3.json")]);
+    expect(model.missingFiles).toEqual([]);
   });
 });
 

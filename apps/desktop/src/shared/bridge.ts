@@ -39,6 +39,11 @@ export interface ImportedHotkey {
   action: string;
   file: string;
   folder: string;
+  triggers: string[];
+  isGlobal: boolean;
+  isActive: boolean;
+  motionGroup?: string;
+  motionIndex?: number;
 }
 
 export interface CubismCoreStatus {

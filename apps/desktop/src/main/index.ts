@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, net, protocol, session, shell } from "electron";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { basename, isAbsolute, relative, resolve, sep, join } from "node:path";
@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import Bonjour from "bonjour-service";
 import { WebSocketServer, type WebSocket } from "ws";
 import { parseLumaLinkMessage, type HelloMessage, type TrackingFrame } from "@lumastage/protocol";
-import { inspectCubismModelFolder, parseEditableVTubeParameterMappings } from "@lumastage/model-compat";
+import { inspectCubismModelFolder, parseEditableVTubeParameterMappings, VTUBE_HOTKEY_MOTION_GROUP } from "@lumastage/model-compat";
 import { applyVTubeParameterMappingsToInputs, mapARKitToVTubeInputs } from "@lumastage/tracking-core";
 import { createVtsEventMessage, handleVtsApiRequest, vtsSessionAcceptsEvent, type VtsApiHost, type VtsApiSession, type VtsArtMeshMatcher, type VtsColorTint, type VtsCurrentModel, type VtsCustomParameterDefinition, type VtsEventName, type VtsItemLoadInput, type VtsItemMoveInput, type VtsModelMoveInput, type VtsParameter, type VtsPhysicsOverride, type VtsSceneItem } from "@lumastage/vts-api";
 import { createDefaultSceneLibrary, normalizeSceneItemTransform, normalizeSceneTransform, parseSceneLibrary, type SceneItem as StoredSceneItem, type SceneLibrary as StoredSceneLibrary, type ScenePreset as StoredScenePreset } from "@lumastage/scene-core";
@@ -277,6 +277,7 @@ async function loadScenes(): Promise<void> {
 }
 
 function clearActiveModel(): void {
+  globalShortcut.unregisterAll();
   activeModelRoot = undefined;
   activeApiModel = undefined;
   activeImportedModel = undefined;
@@ -287,6 +288,41 @@ function clearActiveModel(): void {
   physicsController = undefined;
   publishArtMeshTints();
   publishPhysicsControl();
+}
+
+function electronAccelerator(triggers: string[]): string | undefined {
+  const mapped = triggers.map((trigger) => {
+    const normalized = trigger.trim().toUpperCase();
+    if (["CTRL", "CONTROL", "LEFT CONTROL", "RIGHT CONTROL", "COMMANDORCONTROL"].includes(normalized)) return "CommandOrControl";
+    if (["SHIFT", "LEFT SHIFT", "RIGHT SHIFT"].includes(normalized)) return "Shift";
+    if (["ALT", "OPTION", "LEFT ALT", "RIGHT ALT"].includes(normalized)) return "Alt";
+    if (["COMMAND", "LEFT COMMAND", "RIGHT COMMAND", "META"].includes(normalized)) return "Command";
+    if (normalized === "SPACE") return "Space";
+    if (normalized === "ESC") return "Escape";
+    if (/^[A-Z0-9]$/.test(normalized) || /^F(?:[1-9]|1[0-9]|2[0-4])$/.test(normalized) || ["TAB", "ENTER", "ESCAPE", "UP", "DOWN", "LEFT", "RIGHT"].includes(normalized)) return normalized;
+    return undefined;
+  });
+  return mapped.length > 0 && mapped.every(Boolean) ? [...new Set(mapped as string[])].join("+") : undefined;
+}
+
+function dispatchImportedHotkey(hotkey: ImportedHotkey, triggeredByAPI: boolean): void {
+  const apiHotkey = activeApiModel?.hotkeys.find((candidate) => candidate.hotkeyID === hotkey.id);
+  if (!apiHotkey) return;
+  if (apiHotkey.type.toLowerCase().includes("expression") && apiHotkey.file) {
+    if (activeExpressionFiles.has(apiHotkey.file)) activeExpressionFiles.delete(apiHotkey.file); else activeExpressionFiles.add(apiHotkey.file);
+  }
+  broadcast("vts-hotkey-trigger", hotkey);
+  sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(apiHotkey, triggeredByAPI));
+}
+
+function registerGlobalModelHotkeys(): void {
+  globalShortcut.unregisterAll();
+  for (const hotkey of activeImportedModel?.vTubeHotkeys ?? []) {
+    if (!hotkey.isActive || !hotkey.isGlobal) continue;
+    const accelerator = electronAccelerator(hotkey.triggers);
+    if (!accelerator) continue;
+    try { globalShortcut.register(accelerator, () => dispatchImportedHotkey(hotkey, false)); } catch { /* Invalid or OS-reserved combinations remain available as UI buttons. */ }
+  }
 }
 
 async function loadActiveSceneModel(): Promise<ImportedModel | null> {
@@ -706,6 +742,17 @@ function installAssetProtocols(): void {
       if (url.host !== "active") return new Response("Unknown model", { status: 404 });
       const asset = await safeModelAssetPath(url.pathname);
       if (!asset) return new Response("Invalid model asset path", { status: 403 });
+      const activeManifest = activeImportedModel ? await realpath(activeImportedModel.manifestPath) : undefined;
+      if (activeImportedModel && asset === activeManifest) {
+        const manifest = JSON.parse(await readFile(asset, "utf8")) as Record<string, unknown>;
+        const refs = manifest.FileReferences && typeof manifest.FileReferences === "object" ? manifest.FileReferences as Record<string, unknown> : {};
+        const motions = refs.Motions && typeof refs.Motions === "object" && !Array.isArray(refs.Motions) ? refs.Motions as Record<string, unknown> : {};
+        const runtimeMotions = activeImportedModel.motionGroups[VTUBE_HOTKEY_MOTION_GROUP] ?? [];
+        if (runtimeMotions.length > 0) motions[VTUBE_HOTKEY_MOTION_GROUP] = runtimeMotions.map((file) => ({ File: file.replaceAll("\\", "/") }));
+        refs.Motions = motions;
+        manifest.FileReferences = refs;
+        return new Response(JSON.stringify(manifest), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+      }
       return await net.fetch(pathToFileURL(asset).toString());
     } catch {
       return new Response("Model asset not found", { status: 404 });
@@ -1056,12 +1103,9 @@ function startVtsApiServer(): void {
         candidate.hotkeyID === hotkeyIDOrName || candidate.name.toLowerCase() === hotkeyIDOrName.toLowerCase()
       );
       if (!hotkey) return undefined;
-      const trigger: ImportedHotkey = { id: hotkey.hotkeyID, name: hotkey.name, action: hotkey.type, file: hotkey.file, folder: "" };
-      if (hotkey.type.toLowerCase().includes("expression") && hotkey.file) {
-        if (activeExpressionFiles.has(hotkey.file)) activeExpressionFiles.delete(hotkey.file); else activeExpressionFiles.add(hotkey.file);
-      }
-      broadcast("vts-hotkey-trigger", trigger);
-      sendVtsEvent("HotkeyTriggeredEvent", hotkeyEventData(hotkey, true));
+      const importedHotkey = activeImportedModel?.vTubeHotkeys.find((candidate) => candidate.id === hotkey.hotkeyID);
+      const trigger: ImportedHotkey = importedHotkey ?? { id: hotkey.hotkeyID, name: hotkey.name, action: hotkey.type, file: hotkey.file, folder: "", triggers: [], isGlobal: false, isActive: true };
+      dispatchImportedHotkey(trigger, true);
       return hotkey.hotkeyID;
     },
     expressionStates: () => (activeImportedModel?.expressions ?? []).map((expression) => {
@@ -1214,6 +1258,7 @@ async function inspectModelDirectory(directory: string): Promise<ImportedModel> 
   physicsController = undefined;
   publishArtMeshTints();
   publishPhysicsControl();
+  registerGlobalModelHotkeys();
   return imported;
 }
 

@@ -50,7 +50,7 @@ The importer rejects absolute/path-traversal asset references and reports missin
 
 The **Edit tracking mappings** dialog shows every imported face-input → Live2D-output route and its live value. You can edit input/output ranges, smoothing and clamping, add/remove mappings, or capture the natural minimum/maximum of a connected iPhone signal by moving that part of your face. Overrides are validated and stored per model; **Reset imported** restores the untouched `*.vtube.json` configuration.
 
-The stage toolbar includes a transparent always-on-top overlay for OBS/window capture. Imported VTube Studio expression and motion hotkeys are shown in the inspector; actions that cannot be mapped safely are reported instead of guessed.
+The stage toolbar includes a transparent always-on-top overlay for OBS/window capture. Imported VTube Studio expression and motion hotkeys are shown in the inspector with their original trigger keys. Standalone animations referenced only by `*.vtube.json` are loaded from the model's `motions/` folder through a runtime-only manifest view; actions that cannot be mapped safely are reported instead of guessed.
 
 ## Scenes
 

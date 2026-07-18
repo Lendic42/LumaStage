@@ -247,6 +247,11 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
           return;
         }
         if (action.includes("animation") || action.includes("motion")) {
+          if (hotkey.motionGroup !== undefined && hotkey.motionIndex !== undefined) {
+            const started = await liveModel.motion(hotkey.motionGroup, hotkey.motionIndex, 3);
+            if (!started) throw new Error(`Motion for hotkey “${hotkey.name || hotkey.file}” could not be started`);
+            return;
+          }
           for (const [group, files] of Object.entries(imported.motionGroups)) {
             const index = files.findIndex((file) => file.replaceAll("\\", "/").split("/").pop()?.toLowerCase() === requestedFile);
             if (index >= 0) {

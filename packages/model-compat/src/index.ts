@@ -67,8 +67,17 @@ const vTubeHotkeySchema = z.object({
   Name: z.string().default(""),
   Action: z.string().default("Unset"),
   File: z.string().default(""),
-  Folder: z.string().default("")
+  Folder: z.string().default(""),
+  Triggers: z.object({
+    Trigger1: z.string().default(""),
+    Trigger2: z.string().default(""),
+    Trigger3: z.string().default("")
+  }).passthrough().optional(),
+  IsGlobal: z.boolean().default(false),
+  IsActive: z.boolean().default(true)
 }).passthrough();
+
+export const VTUBE_HOTKEY_MOTION_GROUP = "LumaStageVTubeHotkeys";
 
 export const vTubeStudioSchema = z.object({
   Version: z.number().int().nonnegative().optional(),
@@ -122,6 +131,11 @@ export interface VTubeHotkey {
   action: string;
   file: string;
   folder: string;
+  triggers: string[];
+  isGlobal: boolean;
+  isActive: boolean;
+  motionGroup?: string;
+  motionIndex?: number;
 }
 
 export interface VTubeStudioSetup {
@@ -169,6 +183,15 @@ function safeAssetPath(root: string, reference: string): string {
 
 async function exists(path: string): Promise<boolean> {
   try { await access(path); return true; } catch { return false; }
+}
+
+async function resolveVTubeAsset(root: string, reference: string, folder: string, conventionalFolder: string): Promise<string> {
+  const candidates = [reference];
+  if (folder.trim()) candidates.push(`${folder}/${reference}`);
+  candidates.push(`${conventionalFolder}/${reference}`);
+  const safeCandidates = [...new Set(candidates)].map((candidate) => safeAssetPath(root, candidate));
+  for (const candidate of safeCandidates) if (await exists(candidate)) return candidate;
+  return safeCandidates[0];
 }
 
 async function resolveModelRoot(directory: string): Promise<{ root: string; entries: Dirent<string>[] }> {
@@ -238,8 +261,6 @@ export async function inspectCubismModelFolder(directory: string): Promise<Cubis
       // The renderer can still load models whose optional physics metadata is malformed.
     }
   }
-  const allPaths = [mocPath, ...texturePaths, ...expressions.map((item) => item.path), ...Object.values(motionGroups).flat(), physicsPath, optional(refs.Pose), optional(refs.DisplayInfo), userDataPath].filter((path): path is string => Boolean(path));
-  const missingFiles = (await Promise.all(allPaths.map(async (path) => [path, await exists(path)] as const))).filter(([, present]) => !present).map(([path]) => relative(root, path));
   const groupIds = (name: string) => model.Groups.filter((group) => group.Target === "Parameter" && group.Name === name).flatMap((group) => group.Ids);
   const vTubeEntries = entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(VTUBE_SETUP_SUFFIX));
   const preferredVTube = vTubeEntries.find((entry) => entry.name.slice(0, -VTUBE_SETUP_SUFFIX.length).toLowerCase() === basename(manifests[0].name, MODEL_MANIFEST_SUFFIX).toLowerCase()) ?? vTubeEntries[0];
@@ -267,9 +288,26 @@ export async function inspectCubismModelFolder(directory: string): Promise<Cubis
         outputLive2D: mapping.OutputLive2D,
         smoothing: mapping.Smoothing
       })),
-      hotkeys: setup.Hotkeys.map((hotkey) => ({ id: hotkey.HotkeyID, name: hotkey.Name, action: hotkey.Action, file: hotkey.File, folder: hotkey.Folder }))
+      hotkeys: setup.Hotkeys.map((hotkey) => ({
+        id: hotkey.HotkeyID, name: hotkey.Name, action: hotkey.Action, file: hotkey.File, folder: hotkey.Folder,
+        triggers: [hotkey.Triggers?.Trigger1 ?? "", hotkey.Triggers?.Trigger2 ?? "", hotkey.Triggers?.Trigger3 ?? ""].filter(Boolean),
+        isGlobal: hotkey.IsGlobal, isActive: hotkey.IsActive
+      }))
     };
+    const standaloneMotions: string[] = [];
+    for (const hotkey of vTubeStudio.hotkeys) {
+      if (!hotkey.file || !/(?:animation|motion)/i.test(hotkey.action)) continue;
+      const motionPath = await resolveVTubeAsset(root, hotkey.file, hotkey.folder, "motions");
+      let motionIndex = standaloneMotions.indexOf(motionPath);
+      if (motionIndex < 0) motionIndex = standaloneMotions.push(motionPath) - 1;
+      hotkey.motionGroup = VTUBE_HOTKEY_MOTION_GROUP;
+      hotkey.motionIndex = motionIndex;
+    }
+    if (standaloneMotions.length > 0) motionGroups[VTUBE_HOTKEY_MOTION_GROUP] = standaloneMotions;
   }
+
+  const allPaths = [mocPath, ...texturePaths, ...expressions.map((item) => item.path), ...Object.values(motionGroups).flat(), physicsPath, optional(refs.Pose), optional(refs.DisplayInfo), userDataPath].filter((path): path is string => Boolean(path));
+  const missingFiles = (await Promise.all(allPaths.map(async (path) => [path, await exists(path)] as const))).filter(([, present]) => !present).map(([path]) => relative(root, path));
 
   return {
     directory: root,
