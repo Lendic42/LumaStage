@@ -158,6 +158,8 @@ export function Live2DStage({ model: imported, frame, calibrationNonce, hotkeyRe
         view: canvasRef.current,
         resizeTo: containerRef.current,
         backgroundAlpha: 0,
+        // Keep pixels readable for virtual-camera capture (character + transparent bg).
+        preserveDrawingBuffer: true,
         antialias: true,
         autoDensity: true,
         resolution: Math.min(window.devicePixelRatio, 2)
