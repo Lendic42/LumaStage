@@ -146,13 +146,7 @@ Live2D Cubism Core, модели и туђи ассети имају своје 
 
 ## ⭐ Star History
 
-<a href="https://star-history.com/#Lendic42/LumaStage&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Lendic42/LumaStage&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Lendic42/LumaStage&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Lendic42/LumaStage&type=Date" />
-  </picture>
-</a>
+[![Star History Chart](./star-history.svg)](https://www.star-history.com/#LumaStage&Date)
 
 <p align="center">
   Made with 💜 for VTubers · <a href="https://github.com/Lendic42/LumaStage/releases/latest">Download v0.1.0</a>
